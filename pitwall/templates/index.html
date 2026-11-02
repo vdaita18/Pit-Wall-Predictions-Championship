@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pit Wall · F1 Predictions</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 4 4'><rect width='4' height='4' fill='white'/><rect width='2' height='2'/><rect x='2' y='2' width='2' height='2'/></svg>">
+</head>
+<body>
+  <nav class="rail" aria-label="Main">
+    <a class="brand" href="#/">
+      <span class="brand-flag" aria-hidden="true"></span>
+      <span class="brand-name">Pit Wall<span class="brand-season" id="brand-season"></span></span>
+    </a>
+    <div class="nav" id="nav">
+      <a href="#/" data-route="standings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4zM17 6h3v2a3 3 0 0 1-3 3M7 6H4v2a3 3 0 0 0 3 3"/></svg>Standings</a>
+      <a href="#/calendar" data-route="calendar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>Calendar</a>
+      <a href="#/weekend" data-route="weekend">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 21V4M5 4h13l-2 4 2 4H5"/></svg>This weekend</a>
+      <a href="#/analytics" data-route="analytics">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Analytics</a>
+      <a href="#/replay" data-route="replay">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 15h18l-2-5h-4l-2-3H8l-2 3H3z"/><circle cx="7" cy="16" r="2"/><circle cx="17" cy="16" r="2"/></svg>Season replay</a>
+      <a href="#/cards" data-route="cards">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="18" rx="2"/><circle cx="12" cy="10" r="3"/><path d="M8 17h8"/></svg>Player cards</a>
+      <a href="#/season" data-route="season">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Season picks</a>
+      <a href="#/rules" data-route="rules">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/></svg>Prediction types</a>
+      <a href="#/grid" data-route="grid">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0M16 4a3 3 0 0 1 0 6M21 20a6 6 0 0 0-4-5.6"/></svg>Grid &amp; players</a>
+    </div>
+    <div class="who" id="who"></div>
+    <div class="rail-foot">Results via Jolpica F1</div>
+  </nav>
+
+  <main id="view" class="view" tabindex="-1"></main>
+  <div class="saving" id="saving">Saved</div>
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+  <dialog id="confirm">
+    <h2 id="confirm-title"></h2>
+    <p id="confirm-text" class="muted"></p>
+    <div class="actions">
+      <button class="btn ghost" value="cancel" id="confirm-no">Cancel</button>
+      <button class="btn" value="ok" id="confirm-yes">Confirm</button>
+    </div>
+  </dialog>
+
+  <dialog id="signin" aria-labelledby="signin-title">
+    <form id="signin-form" autocomplete="off">
+      <h2 id="signin-title">Who's playing?</h2>
+      <div id="signin-pass-row" class="signin-row">
+        <label for="signin-pass">Championship passcode</label>
+        <input type="password" id="signin-pass" autocomplete="current-password">
+      </div>
+      <div class="signin-row">
+        <span class="signin-label">I am</span>
+        <div class="who-picks" id="signin-players"></div>
+      </div>
+      <p class="signin-msg" id="signin-msg" role="alert"></p>
+      <div class="actions">
+        <button class="btn ghost" type="submit" value="cancel" formnovalidate>Just watch</button>
+        <button class="btn" type="submit" value="ok">Sign in</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="{{ url_for('static', filename='vendor/chart.umd.js') }}"></script>
+  <script>window.PIT_STATIC = "{{ url_for('static', filename='') }}";</script>
+  <script src="{{ url_for('static', filename='fx.js') }}"></script>
+  <script src="{{ url_for('static', filename='replay.js') }}"></script>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
