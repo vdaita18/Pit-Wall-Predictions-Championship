@@ -71,6 +71,15 @@ def create_app(db_path=None):
         "final_from_standings": "copied the drivers' championship into the final standings",
     }
 
+    # every update changes the version, so browsers fetch the new styles and scripts instead of old cached ones
+    static_dir = os.path.join(HERE, "static")
+    ASSET_V = str(int(max(os.path.getmtime(os.path.join(static_dir, f)) for f in os.listdir(static_dir)
+                          if f.endswith((".js", ".css")))))
+
+    @app.context_processor
+    def asset_version():
+        return {"asset_v": ASSET_V}
+
     # ------------------------------------------------------------------ helpers
     def con():
         if "con" not in g:

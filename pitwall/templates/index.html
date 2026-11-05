@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Pit Wall · F1 Predictions</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=asset_v) }}">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 4 4'><rect width='4' height='4' fill='white'/><rect width='2' height='2'/><rect x='2' y='2' width='2' height='2'/></svg>">
 </head>
 <body>
@@ -72,10 +72,10 @@
     </form>
   </dialog>
 
-  <script src="{{ url_for('static', filename='vendor/chart.umd.js') }}"></script>
+  <script src="{{ url_for('static', filename='vendor/chart.umd.js', v=asset_v) }}"></script>
   <script>window.PIT_STATIC = "{{ url_for('static', filename='') }}";</script>
-  <script src="{{ url_for('static', filename='fx.js') }}"></script>
-  <script src="{{ url_for('static', filename='replay.js') }}"></script>
-  <script src="{{ url_for('static', filename='app.js') }}"></script>
+  <script src="{{ url_for('static', filename='fx.js', v=asset_v) }}"></script>
+  <script src="{{ url_for('static', filename='replay.js', v=asset_v) }}"></script>
+  <script src="{{ url_for('static', filename='app.js', v=asset_v) }}"></script>
 </body>
 </html>
