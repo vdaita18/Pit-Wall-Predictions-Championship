@@ -713,3 +713,5 @@ input.slot-note:hover, input.slot-note:focus { border-color: var(--line); backgr
   .quali label { grid-template-columns: 120px 1fr; }
   label.veil::after { left: 130px; }
 }
+.reserve-note { color: var(--dust); font-size: 13px; margin: 14px 0 0; }
+.reserve-note b { color: var(--chalk); font-weight: 700; }

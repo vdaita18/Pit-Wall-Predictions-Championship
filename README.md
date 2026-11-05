@@ -84,7 +84,7 @@ Your browser opens at http://localhost:5000. Keep the terminal window open while
 | **Analytics** | Championship race, points per weekend, a prediction-profile radar, category strength and head-to-head records. |
 | **Season replay** | Watch the season as a race: one lap per weekend, on a track you choose. Build your car in the garage: six car shapes, five liveries, accent and helmet colors, number and tag. |
 | **Player cards** | A season card for each player. |
-| **Season picks** | Predict the final drivers' championship and answer season questions. Shows every driver's championship points so far; **Update championship points** refreshes them, and Get results does it automatically. |
+| **Season picks** | Predict the final drivers' championship and answer season questions. Shows every driver's championship points so far, and picks score against them, so after the last race they are the final result. **Update championship points** refreshes them, and Get results does it automatically. Reserve drivers who score are listed underneath instead of taking a place. |
 | **Prediction types** | Change the scoring, or add and remove prediction types. |
 | **Grid & players** | Players, teams, drivers, line-up changes, the season year and backups. |
 

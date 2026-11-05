@@ -127,9 +127,25 @@ def create_app(db_path=None):
         return rows("SELECT * FROM categories ORDER BY pos, id")
 
     def season_data():
+        """Season picks, and the standings they're scored against: the drivers' championship as it is now
+        (by the last race it's the final order). Seasons without championship points use the typed-in final order."""
         sp = {(r["player_id"], r["position"]): r["driver"] for r in rows("SELECT * FROM season_picks")}
-        sf = {r["position"]: r["driver"] for r in rows("SELECT * FROM season_final")}
+        sf = {x["position"]: x["driver"] for x in championship()[0]}   # reserves left out, the rest re-ranked
+        if not sf:
+            sf = {r["position"]: r["driver"] for r in rows("SELECT * FROM season_final")}
         return sp, sf
+
+    def championship():
+        """The drivers' championship for the regular grid, plus reserves who scored.
+        Reserves (drivers without a seat of their own on Grid & players) are left out and the rest
+        are re-ranked, so a stand-in's points never shift the order you predicted before the season."""
+        st = rows("SELECT * FROM driver_standings ORDER BY position, driver")
+        seated = {d["name"] for d in drivers() if d["team_id"]}
+        main = [dict(x, official=x["position"]) for x in st if x["driver"] in seated]
+        for i, x in enumerate(main):
+            x["position"] = i + 1
+        reserves = [x for x in st if x["driver"] not in seated and x["points"]]
+        return main, reserves
 
     def season_totals(ps):
         sp, sf = season_data()
@@ -404,7 +420,7 @@ def create_app(db_path=None):
             "season_picks": [{"player_id": k[0], "position": k[1], "driver": v} for k, v in sp.items()],
             "season_final": [{"position": k, "driver": v} for k, v in sf.items()],
             "grid_size": cars_on_grid(rs[-1]["round"] if rs else 1), "lineup_changes": lineup_changes(), "categories": cs,
-            "driver_standings": rows("SELECT * FROM driver_standings ORDER BY position, driver"),
+            "driver_standings": championship()[0], "reserve_points": championship()[1],
             "standings_note": db.setting(con(), "standings_note", ""),
             "sources": {k: {"label": v[1], "first": v[2], "sprint": k in SPRINT_SOURCES} for k, v in SOURCES.items()},
             "season_questions": rows("SELECT * FROM season_questions ORDER BY pos, id"),

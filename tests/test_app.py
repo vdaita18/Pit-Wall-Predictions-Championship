@@ -276,6 +276,21 @@ class PitWallTest(unittest.TestCase):
         self.c.post("/api/season/final-from-standings")
         self.assertEqual(self.c.get("/api/state").get_json()["season_final"], [{"position": 1, "driver": "Norris"}])
 
+    def test_reserves_left_out_of_the_championship(self):
+        self.c.post("/api/drivers", json={"name": "Tsunoda", "code": "TSU", "team_id": None})
+        def d(code, fam): return {"code": code, "familyName": fam}
+        official = (12, [{"position": "1", "points": "300", "wins": "5", "Driver": d("NOR", "Norris")},
+                         {"position": "2", "points": "20", "wins": "0", "Driver": d("TSU", "Tsunoda")},
+                         {"position": "3", "points": "10", "wins": "0", "Driver": d("PIA", "Piastri")}])
+        with mock.patch.object(f1api, "driver_standings", return_value=official):
+            self.c.post("/api/standings/update")
+        self.c.put("/api/season/pick", json={"player_id": self.A, "position": 2, "value": "Piastri"})
+        st = self.c.get("/api/state").get_json()
+        self.assertEqual([(x["position"], x["driver"]) for x in st["driver_standings"]], [(1, "Norris"), (2, "Piastri")])
+        self.assertEqual([(x["driver"], x["points"]) for x in st["reserve_points"]], [("Tsunoda", 20)])
+        # Piastri is P2 once the reserve is left out, so the P2 pick scores
+        self.assertEqual(next(s for s in st["standings"] if s["player_id"] == self.A)["season_points"], 0.5)
+
     def test_car_options(self):
         r = self.c.put("/api/players/%d" % self.A, json={"car_style": "rocket", "car_livery": "sash",
                                                          "car_accent": "#ffffff", "car_helmet": "#112233"})

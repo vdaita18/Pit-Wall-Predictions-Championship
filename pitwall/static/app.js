@@ -802,7 +802,7 @@
   }
   async function viewSeason() {
     const picks = new Map(S.season_picks.map((s) => [s.player_id + ":" + s.position, s.driver]));
-    const final = new Map(S.season_final.map((s) => [s.position, s.driver]));
+    const final = new Map(((S.driver_standings || []).length ? S.driver_standings : S.season_final).map((s) => [s.position, s.driver]));
     const per = S.season_position_points;
     const ds = S.driver_standings || [];
     const now = new Map(ds.map((x) => [x.position, x]));
@@ -814,9 +814,8 @@
         ${S.players.map((p) => {
           const v = picks.get(p.id + ":" + pos) || "";
           const hit = !EMPTY.has(v) && v === final.get(pos);
-          return `<td data-label="${esc(p.name)}"><div class="cell-wrap">${driverSelect(`data-action="season-pick" data-player="${p.id}" data-pos="${pos}"`, v, "standings", !canPick(p.id))}<span class="pts ${hit ? "on" : ""}">${hit ? pts(per) : 0}</span></div></td>`;
-        }).join("")}
-        <td data-label="Final">${driverSelect(`data-action="season-final" data-pos="${pos}"`, final.get(pos) || "", "standings")}</td></tr>`;
+          return `<td data-label="${esc(p.name)}"><div class="cell-wrap">${driverSelect(`data-action="season-pick" data-player="${p.id}" data-pos="${pos}"`, v, null, !canPick(p.id))}<span class="pts ${hit ? "on" : ""}">${hit ? pts(per) : 0}</span></div></td>`;
+        }).join("")}</tr>`;
     }).join("");
     const ans = new Map(S.season_answers.map((a) => [a.question_id + ":" + a.player_id, a.value]));
     const fin = new Map(S.season_question_final.map((a) => [a.question_id, a.value]));
@@ -849,12 +848,13 @@
           <label class="q-pts">Each exact position is worth <input type="number" step="0.25" min="0" value="${per}" data-action="season-per" aria-label="Points per correct position"> pts</label></div>
           <div class="champ-bar">
             <button class="btn small" data-action="update-standings">Update championship points</button>
-            <span class="muted">${S.standings_note ? esc(S.standings_note) + "." : "Shows each driver's points so far. Get results updates them too."}</span>
-            ${ds.length ? `<span class="spacer"></span><button class="btn ghost small" data-action="final-from-standings" title="For the end of the season">Use as final standings</button>` : ""}
+            <span class="muted">${S.standings_note ? esc(S.standings_note) + ". " : ""}Picks score against the Right now column, which becomes the final standings after the last race.</span>
           </div>
           <table class="season-table">
-          <thead><tr><th></th><th>Right now</th>${S.players.map((p) => `<th><span class="dot" style="--c:${p.color}"></span> ${esc(p.name)}</th>`).join("")}<th>Final standing</th></tr></thead>
-          <tbody>${rows}</tbody></table></section>
+          <thead><tr><th></th><th>Right now</th>${S.players.map((p) => `<th><span class="dot" style="--c:${p.color}"></span> ${esc(p.name)}</th>`).join("")}</tr></thead>
+          <tbody>${rows}</tbody></table>
+          ${(S.reserve_points || []).length ? `<p class="reserve-note">Reserve drivers are left out of these standings, so they don't push anyone down a place:
+            ${S.reserve_points.map((x) => `<b>${esc(x.driver)}</b> ${pts(x.points)} pt${x.points === 1 ? "" : "s"}`).join(", ")}.</p>` : ""}</section>
       </div>`;
   }
 
