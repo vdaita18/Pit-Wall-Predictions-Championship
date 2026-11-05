@@ -50,6 +50,14 @@ CREATE TABLE IF NOT EXISTS season_question_final (
 CREATE TABLE IF NOT EXISTS lineup_changes (
     id INTEGER PRIMARY KEY, team_id INTEGER REFERENCES teams(id) ON DELETE CASCADE,
     out_driver TEXT NOT NULL, in_driver TEXT NOT NULL, from_round INTEGER NOT NULL, to_round INTEGER);
+-- extra detail about a driver's session: grid slot, DNF/DNS tags, times, and penalty notes typed in by players
+CREATE TABLE IF NOT EXISTS result_info (
+    race_id INTEGER REFERENCES races(id) ON DELETE CASCADE,
+    session TEXT NOT NULL,           -- P race, S sprint, Q qualifying, FL fastest lap, PS pit stop
+    driver TEXT NOT NULL, grid INTEGER, tag TEXT, status TEXT, time TEXT, note TEXT,
+    PRIMARY KEY (race_id, session, driver));
+CREATE TABLE IF NOT EXISTS driver_standings (
+    driver TEXT PRIMARY KEY, position INTEGER, points REAL, wins INTEGER);
 """
 
 # 2026 grid, in the order teams appear on the Grid Set-up sheet
@@ -83,6 +91,11 @@ MIGRATIONS = [  # (table, column, definition) added to databases made by earlier
     ("players", "car_number", "INTEGER"),
     ("players", "tag", "TEXT"),
     ("races", "circuit", "TEXT"),
+    ("players", "car_livery", "TEXT DEFAULT 'solid'"),
+    ("players", "car_accent", "TEXT"),
+    ("players", "car_helmet", "TEXT"),
+    ("categories", "multi_exact", "REAL DEFAULT 2"),    # with 3+ players: exact pick
+    ("categories", "multi_close", "REAL DEFAULT 1"),    # with 3+ players: next closest pick(s)
 ]
 
 

@@ -5,11 +5,14 @@ Each type is one of:
   result  - filled from race results: a source (race finish, qualifying, sprint, fastest lap, ...)
             and a position (P1, P3, ...). Exact pick scores exact_points; if nobody is exact,
             the single closest pick scores close_points (ties score nothing).
+            With three or more players, types that score a closest pick switch to multi_exact /
+            multi_close: exact picks score multi_exact (2), and the next closest pick or picks score
+            multi_close (1), ties included. If nobody is exact, the closest pick or picks score multi_close.
   pwhat   - like `result` on the race finish, but the position is rolled each weekend.
   judged  - a discussion pick (Good Surprise, Big Flop, ...); players award it with +1.
 """
 
-GRID_SIZE = 22
+GRID_SIZE = 26          # most cars a grid can hold; each weekend shows as many slots as its line-up has
 EMPTY = ("", None, "----")
 
 # result source -> (slot prefix, label used in the UI, label for position 1)
@@ -77,15 +80,15 @@ def categories_for(race, cats):
     return [c for c in cats if c["applies"] == "all" or (c["applies"] == "sprint" and race["is_sprint"])]
 
 
-def result_slots(race, cats):
-    """Race finish P1-P22, plus every other result a prediction type needs this weekend."""
+def result_slots(race, cats, cars=22):
+    """Race finish P1 to P<cars>, plus every other result a prediction type needs this weekend."""
     extra = []
     for c in categories_for(race, cats):
         if c["kind"] == "result" and c["source"] != "race":
             s = slot_of(c, race)
             if s and s not in extra:
                 extra.append(s)
-    return extra + ["P%d" % i for i in range(1, GRID_SIZE + 1)]
+    return extra + ["P%d" % i for i in range(1, min(cars, GRID_SIZE) + 1)]
 
 
 def _rank(driver, results, prefix):
@@ -103,6 +106,7 @@ def score_race(race, players, cats, picks, manual, results):
     picks[(player_id, key)] -> value, manual[(player_id, key)] -> 0/1, results[slot] -> driver
     """
     scores = {p["id"]: {} for p in players}
+    many = len(players) > 2
     for c in categories_for(race, cats):
         key = c["key"]
         for p in players:
@@ -119,21 +123,38 @@ def score_race(race, players, cats, picks, manual, results):
         prefix = SOURCES[c["source"]][0]
         pos = int(slot[len(prefix):])
         exact = [p["id"] for p in players if picks.get((p["id"], key)) == target]
+        multi = many and c["close_points"]
         for pid in exact:
-            scores[pid][key] = c["exact_points"]
-        if exact or not c["close_points"]:
+            scores[pid][key] = _num(c.get("multi_exact"), 2) if multi else c["exact_points"]
+        if not c["close_points"] or (exact and not multi):
             continue
         dist = {}
         for p in players:
+            if p["id"] in exact:
+                continue
             r = _rank(picks.get((p["id"], key)), results, prefix)
             if r is not None:
                 dist[p["id"]] = abs(r - pos)
         if dist:
             best = min(dist.values())
             winners = [pid for pid, d in dist.items() if d == best]
-            if len(winners) == 1:
+            if multi:   # 3+ players: everyone tied for (next) closest scores
+                for pid in winners:
+                    scores[pid][key] = _num(c.get("multi_close"), 1)
+            elif len(winners) == 1:
                 scores[winners[0]][key] = c["close_points"]
     return scores
+
+
+def max_points(c, players):
+    """The most one pick of this type can score."""
+    if players > 2 and c.get("close_points"):
+        return _num(c.get("multi_exact"), 2)
+    return c["exact_points"]
+
+
+def _num(v, default):
+    return default if v is None else v
 
 
 def same(a, b):
@@ -189,12 +210,12 @@ def build_stats(players, races, race_scores, cats):
                 bucket[pid][0] += pts[pid]
                 bucket[pid][1] += 1
 
-    maxpts = {c["key"]: c["exact_points"] or 1 for c in cats}
+    maxpts = {c["key"]: max_points(c, n) or 1 for c in cats}
     prof_pct = {pid: {k: (round(got / (att * maxpts[k]), 3) if att else None)
                       for k, (got, att) in profile[pid].items()} for pid in ids}
     return {
         "per_race": per_race, "running": running, "totals": totals, "profile": prof_pct, "record": record,
         "first_pick": {pid: (first[pid][0] / first[pid][1] if first[pid][1] else None) for pid in ids},
         "second_pick": {pid: (second[pid][0] / second[pid][1] if second[pid][1] else None) for pid in ids},
-        "categories": [{"key": c["key"], "label": c["label"], "max": c["exact_points"]} for c in cats],
+        "categories": [{"key": c["key"], "label": c["label"], "max": max_points(c, n)} for c in cats],
     }

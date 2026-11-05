@@ -160,7 +160,9 @@ def fastest_lap_order(rows):
     """Drivers in fastest-lap order (rank 1 = fastest lap of the race), as result-style rows."""
     ranked = [r for r in rows if (r.get("FastestLap") or {}).get("rank")]
     ranked.sort(key=lambda r: int(r["FastestLap"]["rank"]))
-    return [{"position": str(i + 1), "Driver": r["Driver"]} for i, r in enumerate(ranked)]
+    return [{"position": str(i + 1), "Driver": r["Driver"],
+             "time": ((r["FastestLap"].get("Time") or {}).get("time")), "lap": r["FastestLap"].get("lap")}
+            for i, r in enumerate(ranked)]
 
 
 def _seconds(text):
@@ -182,4 +184,35 @@ def fastest_pit_order(rows, stops):
         if t is not None and did in drivers and (did not in best or t < best[did]):
             best[did] = t
     order = sorted(best, key=lambda d: best[d])
-    return [{"position": str(i + 1), "Driver": drivers[d]} for i, d in enumerate(order)]
+    return [{"position": str(i + 1), "Driver": drivers[d], "time": "%.3fs" % best[d]} for i, d in enumerate(order)]
+
+
+# positionText codes for drivers who weren't classified normally
+STATUS_TAGS = {"R": "DNF", "D": "DSQ", "W": "DNS", "N": "NC", "E": "EXC", "F": "DNQ"}
+
+
+def info_of(row, session):
+    """Grid slot, a short tag (DNF, DNS, +1 Lap...) and a time for one driver's session."""
+    if session in ("FL", "PS"):
+        return {"time": row.get("time"), "status": ("Lap %s" % row["lap"]) if row.get("lap") else None}
+    if session in ("Q", "SQ"):
+        return {"time": row.get("Q3") or row.get("Q2") or row.get("Q1")}
+    status = row.get("status") or ""
+    tag = STATUS_TAGS.get(row.get("positionText", ""))
+    if not tag and status.lower().startswith("did not start"):
+        tag = "DNS"
+    elif not tag and re.fullmatch(r"\+\d+ Laps?", status):
+        tag = status
+    elif not tag and status == "Lapped":
+        tag = "Lapped"
+    grid = row.get("grid")
+    return {"grid": int(grid) if str(grid or "").isdigit() else None, "tag": tag,
+            "status": status if status and status != "Finished" else None, "time": (row.get("Time") or {}).get("time")}
+
+
+def driver_standings(season):
+    """(round, [{position, points, wins, Driver}]) for the drivers' championship so far."""
+    lists = (fetch("%s/driverstandings.json" % season) or {}).get("StandingsTable", {}).get("StandingsLists", [])
+    if not lists:
+        return None, []
+    return int(lists[0].get("round") or 0), lists[0].get("DriverStandings", [])

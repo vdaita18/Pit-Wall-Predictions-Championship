@@ -148,7 +148,8 @@
   // ------------------------------------------------------------------ driver chip select
   const colorOf = (name, pool) => ((pool || []).find((d) => d.name === name) || {}).team_color || teamColor(name);
   /* pool: the drivers to offer (a weekend's line-up); others: also list everyone else under "Other drivers" */
-  function driverSelect(attrs, value, _legacy, locked, pool, others) {
+  /* standings: true adds each driver's championship position and points to the options */
+  function driverSelect(attrs, value, standings, locked, pool, others) {
     if (locked) attrs += " disabled";
     pool = pool || S.drivers;
     const groups = new Map();
@@ -167,11 +168,15 @@
     if (has && !listed.some((d) => d.name === value)) opts += `<option selected>${esc(value)}</option>`;
     for (const [team, ds] of groups) {
       opts += `<optgroup label="${esc(team)}">` + ds.map((d) =>
-        `<option value="${esc(d.name)}" ${d.name === value ? "selected" : ""}>${esc(d.name)}${d.stand_in ? " (in for " + esc(d.replaces) + ")" : ""}</option>`).join("") + "</optgroup>";
+        `<option value="${esc(d.name)}" ${d.name === value ? "selected" : ""}>${esc(d.name)}${d.stand_in ? " (in for " + esc(d.replaces) + ")" : ""}${standings === "standings" ? standingTag(d.name) : ""}</option>`).join("") + "</optgroup>";
     }
     return `<span class="dsel ${has ? "set" : "empty-val"}" style="--team:${has ? colorOf(value, pool) : "transparent"}">
       <select ${attrs} aria-label="Driver">${opts}</select></span>`;
   }
+
+  const standingOf = (name) => (S.driver_standings || []).find((x) => x.driver === name);
+  const standingTag = (name) => { const x = standingOf(name); return x ? ` · P${x.position}, ${pts(x.points)} pts` : ""; };
+  const infoOf = (session, driver) => (((RV && RV.info) || {})[session] || {})[driver] || null;
 
   // ------------------------------------------------------------------ router
   const routes = {
@@ -183,6 +188,8 @@
     const fn = routes[name] || viewStandings;
     const navKey = name === "race" ? "weekend" : (name || "standings");
     document.querySelectorAll("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.route === navKey));
+    const more = $("#nav-more");
+    if (more) { more.classList.toggle("active", !!$("#nav-extra a.active")); closeMore(); }
     let html;
     try { html = await fn(arg); } catch (e) { html = `<div class="empty"><h2>Couldn't load this page</h2><p>${esc(e.message)}</p></div>`; }
     const swap = () => {
@@ -192,7 +199,8 @@
       if (fn.after) fn.after(arg);
     };
     if (animate && document.startViewTransition && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      document.startViewTransition(swap);
+      const t = document.startViewTransition(swap);   // skipped animations (e.g. the phone's address bar resizing) are fine
+      t.ready.catch(() => {}); t.finished.catch(() => {});
     } else {
       swap();
       if (animate) { view.classList.remove("fallback-in"); void view.offsetWidth; view.classList.add("fallback-in"); }
@@ -200,6 +208,15 @@
     if (animate) window.scrollTo({ top: 0 });
   }
   window.addEventListener("hashchange", () => route(true));
+  // phones: the less-used pages live behind a More button above the tab bar
+  function closeMore() { const x = $("#nav-extra"), b = $("#nav-more"); if (x) x.classList.remove("open"); if (b) b.setAttribute("aria-expanded", "false"); }
+  $("#nav-more").addEventListener("click", (e) => {
+    e.stopPropagation();
+    const open = !$("#nav-extra").classList.contains("open");
+    $("#nav-extra").classList.toggle("open", open); $("#nav-more").setAttribute("aria-expanded", String(open));
+  });
+  document.addEventListener("click", (e) => { if (!e.target.closest("#nav-extra")) closeMore(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMore(); });
   const go = (hash) => { if (location.hash === hash) route(true); else location.hash = hash; };
   async function refresh() { await loadState(); await route(false); }
 
@@ -334,7 +351,27 @@
     RV = await api("GET", "/api/races/" + id);
     return raceHtml();
   }
-  viewRace.after = () => { weekendFx({ reveal: true }); };
+  viewRace.after = () => { drawWeekendTrack(); weekendFx({ reveal: true }); };
+  function paintRace(veiled = false) { view.innerHTML = raceHtml(veiled); drawWeekendTrack(); }
+
+  // the weekend's circuit, drawn from the same outlines as the season replay
+  async function drawWeekendTrack() {
+    const box = $("#wk-track"); if (!box || !window.PitReplay) return;
+    const all = await PitReplay.loadCircuits();
+    if (!document.body.contains(box)) return;
+    const id = box.dataset.circuit, c = all[id];
+    const opts = Object.entries(all).sort((a, b) => a[1].name.localeCompare(b[1].name))
+      .map(([k, v]) => `<option value="${k}" ${k === id ? "selected" : ""}>${esc(v.name)}</option>`).join("");
+    box.innerHTML = `${c ? `<svg class="wk-track-svg" role="img" aria-label="${esc(c.name)} layout"><path class="wkt-edge" d="${c.d}"/><path class="wkt-line" d="${c.d}"/><circle class="wkt-start" r="16"/></svg>` : ""}
+      <label class="wk-track-name"><span class="sr-only">Circuit</span><select data-action="race-circuit" aria-label="Circuit">${c ? "" : '<option value="">Choose the circuit</option>'}${opts}</select></label>`;
+    const svg = box.querySelector("svg");
+    if (svg) {
+      const path = svg.querySelector(".wkt-line"), bb = path.getBBox(), pad = 40;
+      svg.setAttribute("viewBox", `${bb.x - pad} ${bb.y - pad} ${bb.width + pad * 2} ${bb.height + pad * 2}`);
+      const st = path.getPointAtLength(0), dot = svg.querySelector(".wkt-start");
+      dot.setAttribute("cx", st.x); dot.setAttribute("cy", st.y);
+    }
+  }
 
   function pickOf(pid, cat) { const p = RV.picks.find((x) => x.player_id === pid && x.category === cat); return p ? p.value : ""; }
   function manualOf(pid, cat) { const p = RV.manual.find((x) => x.player_id === pid && x.category === cat); return p ? p.points : 0; }
@@ -352,9 +389,11 @@
       const rslot = c.kind !== "judged" && c.slot ? c.slot : "";
       const rs = rslot ? ` data-rslot="${rslot}"` : "";
       const vl = rslot && veiled ? " veil" : "";
+      const many = order.length > 2 && c.close_points;
+      const top = many ? c.multi_exact : c.exact_points;
       const cells = order.map((p) => {
         const sc = RV.scores[p.id][c.key];
-        const cls = sc && sc >= c.exact_points && c.close_points ? "two" : sc ? "on" : "";
+        const cls = sc && sc >= top && c.close_points ? "two" : sc ? "on" : "";
         const ptsTag = `<span class="pts ${cls}${vl}"${rs} title="${pts(sc)} pt${sc === 1 ? "" : "s"}">${pts(sc)}</span>`;
         if (c.kind === "judged") {
           return `<td data-label="${esc(p.name)}" class="${isMe(p) ? "mine" : ""}"><div class="cell-wrap">
@@ -371,9 +410,12 @@
             <button class="icon-btn" data-action="roll" title="Roll the PWhat position" aria-label="Roll the PWhat position">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8" cy="8" r="1.4" fill="currentColor"/><circle cx="16" cy="16" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/></svg></button></div>`
         : esc(c.label);
-      const rule = `<small class="cat-rule">${pts(c.exact_points)} pt${c.close_points ? " · " + pts(c.close_points) + " closest" : ""}${c.unique_picks && c.kind !== "judged" ? " · pick differently" : ""}</small>`;
+      const rule = `<small class="cat-rule">${many ? `${pts(c.multi_exact)} exact · ${pts(c.multi_close)} next closest`
+        : `${pts(c.exact_points)} pt${c.close_points ? " · " + pts(c.close_points) + " closest" : ""}`}${c.unique_picks && c.kind !== "judged" ? " · pick differently" : ""}</small>`;
+      const resInfo = rslot && !EMPTY.has(result) ? infoOf(rslot.replace(/\d+$/, ""), result) : null;
+      const resTime = resInfo && resInfo.time && /^(FL|PS|Q|SQ)\d/.test(rslot) ? `<small class="res-time">${esc(resInfo.time)}</small>` : "";
       const resCell = c.kind === "judged" ? `<td class="res" data-label="Result" title="Award the points yourselves">Judged</td>`
-        : `<td class="res ${EMPTY.has(result) ? "" : "has"}${vl}" data-label="Result"${rs}>${EMPTY.has(result) ? "—" : `<span class="dot" style="--c:${colorOf(result, RV.lineup)}"></span> ${esc(result)}`}</td>`;
+        : `<td class="res ${EMPTY.has(result) ? "" : "has"}${vl}" data-label="Result"${rs}>${EMPTY.has(result) ? "—" : `<span class="res-v"><span class="dot" style="--c:${colorOf(result, RV.lineup)}"></span> ${esc(result)}${resTime}</span>`}</td>`;
       return `<tr><td class="cat">${label}${rule}</td>${cells}${resCell}</tr>`;
     }).join("");
 
@@ -384,14 +426,33 @@
       <div>Championship</div>${order.map((p) => `<div class="num big" style="color:${p.color}">${pts(RV.previous[p.id] + sum(RV.scores[p.id]))}</div>`).join("")}
     </div>`;
 
-    const quali = RV.slots.filter((s) => !/^P\d+$/.test(s)).map((s) => `
-      <label data-rslot="${s}" class="${veiled ? "veil" : ""}">${esc(RV.slot_labels[s] || s)}
-        ${driverSelect(`data-action="result" data-slot="${s}"`, RV.results[s], null, false, RV.lineup, true)}</label>`).join("");
-    const grid = RV.slots.filter((s) => /^P\d+$/.test(s)).map((s) => {
-      const n = Number(s.slice(1));
-      return `<div class="slot ${r.pwhat === n ? "target" : ""}${veiled ? " veil" : ""}" data-rslot="${s}"><div class="slot-no">${s}${r.pwhat === n ? "<small>PWhat</small>" : ""}</div>
-        ${driverSelect(`data-action="result" data-slot="${s}"`, RV.results[s], null, false, RV.lineup, true)}</div>`;
+    const quali = RV.slots.filter((s) => !/^P\d+$/.test(s)).map((s) => {
+      const session = s.replace(/\d+$/, ""), inf = infoOf(session, RV.results[s]);
+      const t = inf && inf.time ? `<span class="q-time">${esc(inf.time)}${session === "PS" ? " <small>in the pit lane</small>" : ""}${session === "FL" && inf.status ? " <small>" + esc(inf.status) + "</small>" : ""}</span>` : "";
+      return `<label data-rslot="${s}" class="${veiled ? "veil" : ""}"><span>${esc(RV.slot_labels[s] || s)}${t}</span>
+        ${driverSelect(`data-action="result" data-slot="${s}"`, RV.results[s], null, false, RV.lineup, true)}</label>`;
     }).join("");
+    const grid = RV.slots.filter((s) => /^P\d+$/.test(s)).map((s) => {
+      const n = Number(s.slice(1)), drv = RV.results[s], inf = EMPTY.has(drv) ? null : infoOf("P", drv);
+      let line = "";
+      if (inf) {
+        const g = inf.grid, d = g ? g - n : null;
+        const move = g === 0 ? `<span class="mv pit" title="Started from the pit lane">Pit lane</span>`
+          : g ? `<span class="mv ${d > 0 ? "up" : d < 0 ? "down" : "same"}" title="Started P${g}">${d > 0 ? "▲" + d : d < 0 ? "▼" + (-d) : "="}<small>from P${g}</small></span>` : "";
+        const tag = inf.tag ? `<span class="stag ${/^(DNF|DSQ|DNS|NC|EXC|DNQ)$/.test(inf.tag) ? "out" : ""}" title="${esc(inf.status || inf.tag)}">${esc(inf.tag)}</span>` : "";
+        const time = inf.time && !inf.tag ? `<span class="slot-time">${esc(inf.time)}</span>` : "";
+        line = `<div class="slot-info">${move}${tag}${time}</div>`;
+      }
+      const note = EMPTY.has(drv) ? "" : `<input class="slot-note" type="text" maxlength="40" value="${esc((inf && inf.note) || "")}" placeholder="+ note, e.g. 5s penalty"
+          data-action="note" data-session="P" data-driver="${esc(drv)}" aria-label="Note for ${esc(drv)}">`;
+      return `<div class="slot ${r.pwhat === n ? "target" : ""}${veiled ? " veil" : ""}" data-rslot="${s}"><div class="slot-no">${s}${r.pwhat === n ? "<small>PWhat</small>" : ""}</div>
+        ${driverSelect(`data-action="result" data-slot="${s}"`, drv, null, false, RV.lineup, true)}${line}${note}</div>`;
+    }).join("");
+    const fl = RV.results.FL1, ps = RV.results.PS1;
+    const fastest = [["FL1", "Fastest lap", fl, "FL"], ["PS1", "Fastest pit stop", ps, "PS"]]
+      .filter(([slot, , drv]) => !RV.slots.includes(slot) && !EMPTY.has(drv))
+      .map(([, label, drv, sess]) => { const inf = infoOf(sess, drv);
+        return `<div><small>${label}</small><b><span class="dot" style="--c:${colorOf(drv, RV.lineup)}"></span> ${esc(drv)}</b>${inf && inf.time ? ` ${esc(inf.time)}${sess === "PS" ? " in the pit lane" : ""}` : ""}</div>`; }).join("");
 
     return `
       <div class="wk-head">
@@ -408,6 +469,7 @@
             <button class="btn ghost small" data-action="lineup-open">Line-up change</button>
           </div>
         </div>
+        <div class="wk-track" id="wk-track" data-circuit="${esc(r.circuit || "")}"></div>
         <div class="wk-nav">
           ${RV.prev_id ? `<a class="btn ghost small" href="#/race/${RV.prev_id}" aria-label="Previous race">‹ Previous</a>` : ""}
           ${RV.next_id ? `<a class="btn ghost small" href="#/race/${RV.next_id}" aria-label="Next race">Next ›</a>` : ""}
@@ -425,6 +487,7 @@
           <div class="grid-head"><h2 style="margin:0">Results</h2>
             <button class="btn" data-action="fetch-results">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 21V4M5 4h13l-2 4 2 4H5"/></svg>Get results</button></div>
+          ${fastest ? `<div class="fastest${veiled ? " veil-box" : ""}">${fastest}</div>` : ""}
           <div class="quali">${quali}</div>
           <div class="start-grid">${grid}</div><div class="grid-tail"></div>
         </section>
@@ -447,8 +510,14 @@
     } catch (e) { /* ignore */ }
   }
   const gridComplete = () => RV.slots.filter((x) => /^P\d+$/.test(x)).every((x) => !EMPTY.has(RV.results[x]));
-  const picksComplete = () => !RV.race.has_results && RV.categories.filter((c) => c.kind !== "judged")
-    .every((c) => RV.pick_order.every((pid) => !EMPTY.has(pickOf(pid, c.key))));
+  /* Lights out once everyone has made the Crazy Prediction, the last call of the weekend.
+     Without a Crazy Prediction type, once every driver pick is in. */
+  const picksComplete = () => {
+    if (RV.race.has_results) return false;
+    const crazy = RV.categories.find((c) => c.key === "crazy") || RV.categories.find((c) => c.kind === "judged" && /crazy/i.test(c.label));
+    if (crazy) return RV.pick_order.every((pid) => !EMPTY.has(String(pickOf(pid, crazy.key) || "").trim()));
+    return RV.categories.filter((c) => c.kind !== "judged").every((c) => RV.pick_order.every((pid) => !EMPTY.has(pickOf(pid, c.key))));
+  };
   let fxBusy = false;
   async function weekendFx({ reveal = false } = {}) {
     if (fxBusy || !RV) return;
@@ -466,7 +535,7 @@
     } finally { fxBusy = false; }
   }
   async function revealAndCelebrate() {
-    view.innerHTML = raceHtml(true);
+    paintRace(true);
     const order = RV.slots.filter((x) => !/^P\d+$/.test(x))
       .concat(RV.slots.filter((x) => /^P\d+$/.test(x)).map((x) => Number(x.slice(1))).sort((a, b) => b - a).map((n) => "P" + n));
     await PitFX.revealResults(view, order);
@@ -568,7 +637,7 @@
     const scrollY = window.scrollY;
     const focusKey = document.activeElement && document.activeElement.dataset ? JSON.stringify(document.activeElement.dataset) : null;
     [RV] = await Promise.all([api("GET", "/api/races/" + RV.race.id), loadState()]);
-    view.innerHTML = raceHtml();
+    paintRace();
     window.scrollTo({ top: scrollY });
     if (focusKey) {
       const d = JSON.parse(focusKey);
@@ -735,14 +804,20 @@
     const picks = new Map(S.season_picks.map((s) => [s.player_id + ":" + s.position, s.driver]));
     const final = new Map(S.season_final.map((s) => [s.position, s.driver]));
     const per = S.season_position_points;
-    const rows = Array.from({ length: S.grid_size }, (_, i) => i + 1).map((pos) => `
+    const ds = S.driver_standings || [];
+    const now = new Map(ds.map((x) => [x.position, x]));
+    const rows = Array.from({ length: Math.max(S.grid_size, ds.length) }, (_, i) => i + 1).map((pos) => {
+      const cur = now.get(pos);
+      return `
       <tr><td class="pos">P${pos}</td>
+        <td class="now" data-label="Right now">${cur ? `<span class="dot" style="--c:${teamColor(cur.driver)}"></span><span class="now-name">${esc(cur.driver)}</span><b>${pts(cur.points)}</b>` : '<span class="muted">—</span>'}</td>
         ${S.players.map((p) => {
           const v = picks.get(p.id + ":" + pos) || "";
           const hit = !EMPTY.has(v) && v === final.get(pos);
-          return `<td><div class="cell-wrap">${driverSelect(`data-action="season-pick" data-player="${p.id}" data-pos="${pos}"`, v, true, !canPick(p.id))}<span class="pts ${hit ? "on" : ""}">${hit ? pts(per) : 0}</span></div></td>`;
+          return `<td data-label="${esc(p.name)}"><div class="cell-wrap">${driverSelect(`data-action="season-pick" data-player="${p.id}" data-pos="${pos}"`, v, "standings", !canPick(p.id))}<span class="pts ${hit ? "on" : ""}">${hit ? pts(per) : 0}</span></div></td>`;
         }).join("")}
-        <td>${driverSelect(`data-action="season-final" data-pos="${pos}"`, final.get(pos) || "", true)}</td></tr>`).join("");
+        <td data-label="Final">${driverSelect(`data-action="season-final" data-pos="${pos}"`, final.get(pos) || "", "standings")}</td></tr>`;
+    }).join("");
     const ans = new Map(S.season_answers.map((a) => [a.question_id + ":" + a.player_id, a.value]));
     const fin = new Map(S.season_question_final.map((a) => [a.question_id, a.value]));
     const same = (a, b) => a && b && String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
@@ -772,8 +847,13 @@
         </section>
         <section class="panel" style="overflow-x:auto"><div class="grid-head"><h2 style="margin:0">Final drivers' standings</h2>
           <label class="q-pts">Each exact position is worth <input type="number" step="0.25" min="0" value="${per}" data-action="season-per" aria-label="Points per correct position"> pts</label></div>
+          <div class="champ-bar">
+            <button class="btn small" data-action="update-standings">Update championship points</button>
+            <span class="muted">${S.standings_note ? esc(S.standings_note) + "." : "Shows each driver's points so far. Get results updates them too."}</span>
+            ${ds.length ? `<span class="spacer"></span><button class="btn ghost small" data-action="final-from-standings" title="For the end of the season">Use as final standings</button>` : ""}
+          </div>
           <table class="season-table">
-          <thead><tr><th></th>${S.players.map((p) => `<th><span class="dot" style="--c:${p.color}"></span> ${esc(p.name)}</th>`).join("")}<th>Final standing</th></tr></thead>
+          <thead><tr><th></th><th>Right now</th>${S.players.map((p) => `<th><span class="dot" style="--c:${p.color}"></span> ${esc(p.name)}</th>`).join("")}<th>Final standing</th></tr></thead>
           <tbody>${rows}</tbody></table></section>
       </div>`;
   }
@@ -794,6 +874,9 @@
         <div class="rule-main">
           <input type="text" class="rule-label" value="${esc(c.label)}" data-action="cat-edit" data-field="label" data-id="${c.id}" aria-label="Name">
           <div class="rule-what">${esc(what)}${c.kind === "result" ? ` <select data-action="cat-edit" data-field="position" data-id="${c.id}" aria-label="Position">${Array.from({ length: S.grid_size }, (_, n) => `<option ${n + 1 === c.position ? "selected" : ""}>${n + 1}</option>`).join("")}</select>` : ""}</div>
+          ${c.kind !== "judged" && c.close_points ? `<div class="rule-multi ${S.players.length > 2 ? "live" : ""}">With 3+ players: exact
+            <input type="number" step="0.25" min="0" value="${c.multi_exact ?? 2}" data-action="cat-edit" data-field="multi_exact" data-id="${c.id}" aria-label="Exact pick with 3 or more players">
+            next closest <input type="number" step="0.25" min="0" value="${c.multi_close ?? 1}" data-action="cat-edit" data-field="multi_close" data-id="${c.id}" aria-label="Next closest pick with 3 or more players"></div>` : ""}
         </div>
         <label>Exact <input type="number" step="0.25" min="0" value="${c.exact_points}" data-action="cat-edit" data-field="exact_points" data-id="${c.id}"></label>
         ${c.kind === "judged" ? "<span></span>" : `<label>Closest <input type="number" step="0.25" min="0" value="${c.close_points}" data-action="cat-edit" data-field="close_points" data-id="${c.id}"></label>`}
@@ -804,7 +887,8 @@
     }).join("");
     return `
       <div class="page-head"><div><h1>Prediction types</h1>
-        <p class="sub">Every weekend uses these, and scoring, standings and analytics follow automatically. Exact picks earn the first number. If nobody is exact, the single closest pick earns the second, and a tie for closest earns nothing.</p></div></div>
+        <p class="sub">Every weekend uses these, and scoring, standings and analytics follow automatically. Exact picks earn the first number. If nobody is exact, the single closest pick earns the second, and a tie for closest earns nothing.</p>
+        <p class="sub">With 3 or more players, types with a closest pick score differently: an exact pick earns the "exact" number (2), and the next closest pick earns the "next closest" number (1). If nobody is exact, the closest pick earns it. Ties for closest all score.</p></div></div>
       <div class="stack">
         <section class="panel"><ol class="rules">${rowsHtml}</ol></section>
         <section class="panel"><h2>Add a prediction type</h2>
@@ -924,6 +1008,16 @@
     } else if (a === "text-pick") {
       await api("PUT", `/api/races/${RV.race.id}/pick`, { player_id: el.dataset.player, category: el.dataset.cat, value: v });
       flashSaved();
+      const pid = Number(el.dataset.player), mine = RV.picks.find((x) => x.player_id === pid && x.category === el.dataset.cat);
+      if (mine) mine.value = v; else RV.picks.push({ player_id: pid, category: el.dataset.cat, value: v });
+      weekendFx();
+    } else if (a === "note") {
+      await api("PUT", `/api/races/${RV.race.id}/note`, { session: el.dataset.session, driver: el.dataset.driver, note: v });
+      const box = (RV.info[el.dataset.session] = RV.info[el.dataset.session] || {});
+      box[el.dataset.driver] = Object.assign(box[el.dataset.driver] || {}, { note: v.trim() });
+      flashSaved();
+    } else if (a === "race-circuit") {
+      await api("PATCH", `/api/races/${RV.race.id}`, { circuit: v }); flashSaved(); await reloadRace();
     } else if (a === "result") {
       await api("PUT", `/api/races/${RV.race.id}/result`, { slot: el.dataset.slot, value: v });
       flashSaved(); markSeen("reveal", RV.race.id); await reloadRace();
@@ -996,6 +1090,13 @@
       el.disabled = true;
       try { const r = await api("POST", "/api/races/full-calendar"); toast(r.added ? `Added ${r.added} race weekends.` : "Every round is already on the calendar."); await refresh(); }
       finally { el.disabled = false; }
+    } else if (a === "update-standings") {
+      el.disabled = true; const label = el.textContent; el.textContent = "Updating…";
+      try { const r = await api("POST", "/api/standings/update"); toast(r.message); await refresh(); }
+      finally { el.disabled = false; el.textContent = label; }
+    } else if (a === "final-from-standings") {
+      if (!(await confirmBox("Use the current standings as final?", "The Final standing column is filled from the drivers' championship as it is now, and season picks are scored against it. Do this once the last race is done.", "Fill final standings"))) return;
+      await api("POST", "/api/season/final-from-standings"); toast("Final standings filled in."); await refresh();
     } else if (a === "cat-move") {
       await api("POST", `/api/categories/${id}/move`, { dir: Number(el.dataset.dir) }); await refresh();
     } else if (a === "cat-delete") {

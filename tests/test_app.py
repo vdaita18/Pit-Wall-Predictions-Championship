@@ -196,6 +196,94 @@ class PitWallTest(unittest.TestCase):
         sc = self.c.get("/api/races/%d" % rid).get_json()["scores"]
         self.assertEqual([sc[str(p["id"])]["p1"] for p in ps], [1, 1, 1])
 
+    def test_three_players_closest_rule(self):
+        for n in ("Sam", "Kit"):
+            self.c.post("/api/players", json={"name": n})
+        a, b, c, d = [p["id"] for p in self.c.get("/api/state").get_json()["players"]]
+        rid = self.race()
+        for i, drv in enumerate(["Norris", "Piastri", "Russell", "Leclerc", "Hamilton"]):
+            self.c.put("/api/races/%d/result" % rid, json={"slot": "FL%d" % (i + 1), "value": drv})
+        score = lambda: [self.c.get("/api/races/%d" % rid).get_json()["scores"][str(p)]["fastest_lap"] for p in (a, b, c, d)]
+        # exact gets 2, the next closest gets 1
+        for p, drv in ((a, "Norris"), (b, "Piastri"), (c, "Leclerc"), (d, "Hamilton")):
+            self.pick(rid, p, "fastest_lap", drv)
+        self.assertEqual(score(), [2, 1, 0, 0])
+        # two tied for next closest both get 1
+        self.pick(rid, c, "fastest_lap", "Piastri")
+        self.assertEqual(score(), [2, 1, 1, 0])
+        # nobody exact: the closest gets 1, and a tie for closest gives both 1
+        self.pick(rid, a, "fastest_lap", "Russell")
+        self.assertEqual(score(), [0, 1, 1, 0])
+        self.pick(rid, b, "fastest_lap", "Hamilton")
+        self.assertEqual(score(), [0, 0, 1, 0])
+        # the 3+ player points can be changed per prediction type
+        cat = next(x for x in self.c.get("/api/state").get_json()["categories"] if x["key"] == "fastest_lap")
+        self.c.put("/api/categories/%d" % cat["id"], json={"multi_close": 1.5})
+        self.assertEqual(score(), [0, 0, 1.5, 0])
+
+    def test_pwhat_rolls_up_to_the_last_car(self):
+        rid = self.race()
+        seen = {self.c.post("/api/races/%d/roll" % rid).get_json()["pwhat"] for _ in range(400)}
+        self.assertEqual((min(seen), max(seen)), (4, 22))
+        # a 20-car season rolls 4 to 20 and shows 20 result slots
+        for d in self.c.get("/api/state").get_json()["drivers"]:
+            if d["name"] in ("Perez", "Bottas"):
+                self.c.put("/api/drivers/%d" % d["id"], json={"team_id": None})
+        self.assertEqual(self.c.post("/api/races/%d/roll" % rid).get_json()["max"], 20)
+        slots = self.c.get("/api/races/%d" % rid).get_json()["slots"]
+        self.assertEqual(slots[-1], "P20")
+
+    def test_result_details_notes_and_championship(self):
+        rid = self.race("Mexico MX")
+        def row(pos, code, fam, grid, text=None, status="Finished", t=None, fl=None):
+            r = {"position": str(pos), "positionText": text or str(pos), "grid": str(grid), "status": status,
+                 "Driver": {"code": code, "familyName": fam, "driverId": fam.lower()}, "Constructor": {"name": "X"}}
+            if t: r["Time"] = {"time": t}
+            if fl: r["FastestLap"] = {"rank": fl[0], "lap": "50", "Time": {"time": fl[1]}}
+            return r
+        res = [row(1, "NOR", "Norris", 3, t="1:40:12.1", fl=("2", "1:20.5")), row(2, "PIA", "Piastri", 1, t="+3.2", fl=("1", "1:20.1")),
+               row(3, "VER", "Verstappen", 0, status="+1 Lap"), row(4, "RUS", "Russell", 2, text="R", status="Retired")]
+        data = {"race": res, "quali": [], "sprint": [], "fastest_lap": f1api.fastest_lap_order(res),
+                "fastest_pit": [{"position": "1", "Driver": res[0]["Driver"], "time": "21.402s"}]}
+        with mock.patch.object(f1api, "schedule", return_value=[{"round": 19, "_hay": "mexico"}]), \
+             mock.patch.object(f1api, "get_results", return_value=("Mexico GP", data)), \
+             mock.patch.object(f1api, "fetch", side_effect=f1api.F1ApiError("offline")):
+            self.c.post("/api/races/%d/fetch-results" % rid)
+        d = self.c.get("/api/races/%d" % rid).get_json()
+        self.assertEqual((d["info"]["P"]["Norris"]["grid"], d["info"]["P"]["Verstappen"]["tag"], d["info"]["P"]["Russell"]["tag"]),
+                         (3, "+1 Lap", "DNF"))
+        self.assertEqual((d["results"]["FL1"], d["info"]["FL"]["Piastri"]["time"], d["info"]["PS"]["Norris"]["time"]),
+                         ("Piastri", "1:20.1", "21.402s"))
+        # a penalty note survives fetching the results again
+        self.c.put("/api/races/%d/note" % rid, json={"session": "P", "driver": "Norris", "note": "+5s penalty"})
+        with mock.patch.object(f1api, "schedule", return_value=[{"round": 19, "_hay": "mexico"}]), \
+             mock.patch.object(f1api, "get_results", return_value=("Mexico GP", data)), \
+             mock.patch.object(f1api, "fetch", side_effect=f1api.F1ApiError("offline")):
+            self.c.post("/api/races/%d/fetch-results" % rid)
+        self.assertEqual(self.c.get("/api/races/%d" % rid).get_json()["info"]["P"]["Norris"]["note"], "+5s penalty")
+        # with the results service offline, championship points are worked out from the results (the DNF scores nothing)
+        st = self.c.get("/api/state").get_json()
+        pts = {x["driver"]: x["points"] for x in st["driver_standings"]}
+        self.assertEqual((pts["Norris"], pts["Piastri"], pts["Verstappen"], pts["Russell"]), (25, 18, 15, 0))
+        self.assertIn("Worked out from your results", st["standings_note"])
+        # official standings win when the service answers
+        official = (19, [{"position": "1", "points": "331", "wins": "7", "Driver": {"code": "NOR", "familyName": "Norris"}}])
+        with mock.patch.object(f1api, "driver_standings", return_value=official):
+            out = self.c.post("/api/standings/update").get_json()
+        self.assertEqual(out["message"], "Official standings after Mexico.")
+        st = self.c.get("/api/state").get_json()["driver_standings"]
+        self.assertEqual((st[0]["driver"], st[0]["points"]), ("Norris", 331))
+        self.c.post("/api/season/final-from-standings")
+        self.assertEqual(self.c.get("/api/state").get_json()["season_final"], [{"position": 1, "driver": "Norris"}])
+
+    def test_car_options(self):
+        r = self.c.put("/api/players/%d" % self.A, json={"car_style": "rocket", "car_livery": "sash",
+                                                         "car_accent": "#ffffff", "car_helmet": "#112233"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self.c.put("/api/players/%d" % self.A, json={"car_accent": "red"}).status_code, 400)
+        p = next(x for x in self.c.get("/api/state").get_json()["players"] if x["id"] == self.A)
+        self.assertEqual((p["car_style"], p["car_livery"], p["car_accent"], p["car_helmet"]), ("rocket", "sash", "#ffffff", "#112233"))
+
     def test_full_calendar_works_offline(self):
         with mock.patch.object(f1api, "fetch", side_effect=f1api.F1ApiError("offline")):
             out = self.c.post("/api/races/full-calendar").get_json()

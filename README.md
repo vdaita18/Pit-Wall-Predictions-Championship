@@ -80,11 +80,11 @@ Your browser opens at http://localhost:5000. Keep the terminal window open while
 |---|---|
 | **Standings** | The championship battle, who's up next and who picks first, and each player's weekend-by-weekend form. |
 | **Calendar** | Add the whole season in one click, or add races one at a time. |
-| **This weekend** | Make picks, roll the PWhat position (with lights out), award judged points with the **+** button, and enter results. **Get results** fills them in from the official results, with a P22-to-P1 reveal. |
+| **This weekend** | The circuit map, picks, the PWhat roll, judged points with the **+** button, and results. Lights out runs once everyone has made their Crazy Prediction. **Get results** fills in the results with a last-to-first reveal, showing places gained or lost from the grid, DNF/DNS/DSQ and laps down, race gaps, and fastest lap and pit stop times. Add a note to any finisher, like a 5-second penalty. |
 | **Analytics** | Championship race, points per weekend, a prediction-profile radar, category strength and head-to-head records. |
-| **Season replay** | Watch the season as a race: one lap per weekend, on a track you choose. |
+| **Season replay** | Watch the season as a race: one lap per weekend, on a track you choose. Build your car in the garage: six car shapes, five liveries, accent and helmet colors, number and tag. |
 | **Player cards** | A season card for each player. |
-| **Season picks** | Predict the final drivers' championship and answer season questions. |
+| **Season picks** | Predict the final drivers' championship and answer season questions. Shows every driver's championship points so far; **Update championship points** refreshes them, and Get results does it automatically. |
 | **Prediction types** | Change the scoring, or add and remove prediction types. |
 | **Grid & players** | Players, teams, drivers, line-up changes, the season year and backups. |
 
@@ -98,6 +98,8 @@ Your browser opens at http://localhost:5000. Keep the terminal window open while
 
 Each type has points for an exact pick, points for the closest pick when nobody is exact (a tie for closest scores nothing), whether players must all pick different drivers, and whether it runs every weekend or only on sprint weekends.
 
+With three or more players, types that score a closest pick work differently: an exact pick scores 2, and the next closest pick scores 1. If nobody is exact, the closest pick scores 1. Players tied for closest all score. Both numbers can be changed for each type.
+
 **Season picks** has the final-standings prediction, with points per correct position, plus season questions. "Which race will the world champion be crowned at?" is included, and you can add your own, answered with a race, driver, team, player or anything typed.
 
 **Players:** add as many as you like. First pick rotates through everyone in order.
@@ -107,7 +109,8 @@ Each type has points for an exact pick, points for the closest pick when nobody 
 ## Default rules
 
 - Pole, P1, P2, P3, Sprint Pole and Sprint P1: 1 point for the exact driver.
-- PWhat, fastest lap and fastest pit stop: 1 point for exact, 0.5 for the single closest pick.
+- PWhat, fastest lap and fastest pit stop: 1 point for exact, 0.5 for the single closest pick. With 3+ players: 2 for exact, 1 for the next closest.
+- PWhat rolls a position from P4 to the last car on that weekend's grid (P22 with 22 cars, P20 with 20).
 - Final drivers' championship: 0.5 per correct position. The champion question: 0.5.
 - Only PWhat and fastest pit stop need everyone to pick a different driver.
 - Good Surprise, Big Flop and the Crazy Prediction are judged by the players.
@@ -122,7 +125,7 @@ Set the year on **Grid & players**, then click **Calendar → Add the whole seas
 
 Everything lives in one file, `data/pitwall.db`. Back it up from **Grid & players → Download backup**, or export every prediction as a CSV. To move a championship to another copy, upload a backup over `data/pitwall.db` and reload.
 
-Results come from the free [Jolpica F1 API](https://github.com/jolpica/jolpica-f1) and usually appear a little while after each session. Sprint pole isn't published there, so enter that one yourself.
+Results come from the free [Jolpica F1 API](https://github.com/jolpica/jolpica-f1) and usually appear a little while after each session. Sprint pole and time penalties aren't published there, so enter those yourself. Pit stop times cover the whole trip through the pit lane. When the results service can't be reached, championship points are worked out from the results entered in Pit Wall, so they're only complete if every race and sprint finishing order is in.
 
 ## Where the code is
 

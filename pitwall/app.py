@@ -16,6 +16,13 @@ from . import circuits, db, f1api
 from .scoring import (GRID_SIZE, EMPTY, SOURCES, SPRINT_SOURCES, build_stats, categories_for, result_slots,
                       score_race, season_points, slot_label, slot_of)
 
+RACE_POINTS = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1]
+SPRINT_POINTS = [8, 7, 6, 5, 4, 3, 2, 1]
+NO_POINTS = {"DNF", "DSQ", "DNS", "NC", "EXC", "DNQ"}
+CAR_STYLES = ("classic", "wedge", "retro", "hypercar", "kart", "rocket")
+CAR_LIVERIES = ("solid", "stripe", "twin", "split", "sash")
+HEX = re.compile(r"#[0-9a-fA-F]{6}")
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 FLAG_RE = re.compile("[\U0001F1E6-\U0001F1FF]{2}")
 
@@ -60,6 +67,8 @@ def create_app(db_path=None):
         "fetch_results": "fetched the official results", "roll": "rolled the PWhat position",
         "add_race": "added a race", "delete_race": "deleted a race", "edit_race": "edited a race",
         "season_pick": "made a season pick", "season_final": "updated the final standings",
+        "set_note": "added a result note", "update_standings": "updated the drivers' championship",
+        "final_from_standings": "copied the drivers' championship into the final standings",
     }
 
     # ------------------------------------------------------------------ helpers
@@ -182,6 +191,58 @@ def create_app(db_path=None):
             t = teams.get(x["seat_team_id"], {})
             x["team"], x["team_color"], x["team_id"] = t.get("name"), t.get("color"), x["seat_team_id"]
         return seats
+
+    def cars_on_grid(round_no):
+        return max(4, len(lineup_for(round_no)) or 22)
+
+    # ------------------------------------------------------------------ drivers' championship
+    def computed_standings():
+        """Championship points worked out from the results entered in Pit Wall."""
+        pts, wins = {}, {}
+        yr = int(season()) if season().isdigit() else 0
+        for r in races():
+            _, _, res = race_data(r["id"])
+            tags = {(x["session"], x["driver"]): x["tag"] for x in rows("SELECT * FROM result_info WHERE race_id=?", (r["id"],))}
+            for prefix, table in (("P", RACE_POINTS), ("S", SPRINT_POINTS)):
+                for i, value in enumerate(table):
+                    d = res.get("%s%d" % (prefix, i + 1))
+                    if d in EMPTY or tags.get((prefix, d)) in NO_POINTS:
+                        continue
+                    pts[d] = pts.get(d, 0) + value
+                    if prefix == "P" and i == 0:
+                        wins[d] = wins.get(d, 0) + 1
+            fl = res.get("FL1")
+            if 2019 <= yr <= 2024 and fl not in EMPTY and fl in [res.get("P%d" % n) for n in range(1, 11)]:
+                pts[fl] = pts.get(fl, 0) + 1   # the fastest-lap point, 2019 to 2024
+        for d in drivers():
+            if d["team_id"] and not d["sidelined"]:
+                pts.setdefault(d["name"], 0)
+        order = sorted(pts, key=lambda d: (-pts[d], -wins.get(d, 0), d))
+        return [(d, i + 1, pts[d], wins.get(d, 0)) for i, d in enumerate(order)]
+
+    def update_standings():
+        """Official standings when the results service answers, otherwise worked out from your results."""
+        rows_, note = [], ""
+        try:
+            rnd, official = f1api.driver_standings(season())
+            if official:
+                m = f1api.DriverMatcher(drivers())
+                rows_ = [(m.name_for(x["Driver"]), int(x.get("position") or i + 1), float(x.get("points") or 0),
+                          int(x.get("wins") or 0)) for i, x in enumerate(official)]
+                race = next((r for r in races() if r["api_round"] == rnd), None)
+                note = "Official standings after %s" % (race["title"] if race else "round %d" % rnd)
+        except f1api.F1ApiError:
+            pass
+        if not rows_:
+            rows_ = computed_standings()
+            done = [r for r in races() if r["has_results"]]
+            note = ("Worked out from your results after %s" % done[-1]["title"]) if done else ""
+        con().execute("DELETE FROM driver_standings")
+        con().executemany("INSERT OR REPLACE INTO driver_standings VALUES (?,?,?,?)",
+                          [(d, pos, round(p_, 2), w) for d, pos, p_, w in rows_])
+        con().execute("INSERT OR REPLACE INTO settings VALUES ('standings_note', ?)", (note,))
+        con().commit()
+        return note, len(rows_)
 
     STOP = {"f1", "team", "formula", "one", "scuderia", "aramco", "cognizant", "bwt", "moneygram", "visa", "cash", "app", ""}
 
@@ -333,7 +394,9 @@ def create_app(db_path=None):
             "stats": stats, "standings": standings,
             "season_picks": [{"player_id": k[0], "position": k[1], "driver": v} for k, v in sp.items()],
             "season_final": [{"position": k, "driver": v} for k, v in sf.items()],
-            "grid_size": GRID_SIZE, "lineup_changes": lineup_changes(), "categories": cs,
+            "grid_size": cars_on_grid(rs[-1]["round"] if rs else 1), "lineup_changes": lineup_changes(), "categories": cs,
+            "driver_standings": rows("SELECT * FROM driver_standings ORDER BY position, driver"),
+            "standings_note": db.setting(con(), "standings_note", ""),
             "sources": {k: {"label": v[1], "first": v[2], "sprint": k in SPRINT_SOURCES} for k, v in SOURCES.items()},
             "season_questions": rows("SELECT * FROM season_questions ORDER BY pos, id"),
             "season_answers": rows("SELECT * FROM season_answers"),
@@ -403,7 +466,12 @@ def create_app(db_path=None):
             for pid, v in sc.items():
                 prev[pid] = round(prev[pid] + sum(v.values()), 2)
         here = [dict(c, slot=slot_of(c, race)) for c in categories_for(race, cs)]
-        slots = result_slots(race, cs)
+        lineup = lineup_for(race["round"])
+        filled = [int(k[1:]) for k, v in results.items() if re.fullmatch(r"P\d+", k) and v not in EMPTY]
+        slots = result_slots(race, cs, max([len(lineup) or 22] + filled))
+        info = {}
+        for r in rows("SELECT * FROM result_info WHERE race_id=?", (rid,)):
+            info.setdefault(r["session"], {})[r["driver"]] = {k: r[k] for k in ("grid", "tag", "status", "time", "note")}
         idx = (race["round"] - 1) % len(ps) if ps else 0
         order = [p["id"] for p in ps[idx:] + ps[:idx]]
         return jsonify({
@@ -412,7 +480,7 @@ def create_app(db_path=None):
             "picks": [{"player_id": k[0], "category": k[1], "value": v} for k, v in picks.items()],
             "manual": [{"player_id": k[0], "category": k[1], "points": v} for k, v in manual.items()],
             "results": results, "scores": scores, "previous": prev, "pick_order": order,
-            "lineup": lineup_for(race["round"]),
+            "lineup": lineup, "info": info,
             "prev_id": next((r["id"] for r in rs if r["round"] == race["round"] - 1), None),
             "next_id": next((r["id"] for r in rs if r["round"] == race["round"] + 1), None),
         })
@@ -456,7 +524,7 @@ def create_app(db_path=None):
     @app.route("/api/races/<int:rid>/roll", methods=["POST"])
     def roll(rid):
         race = next((r for r in races() if r["id"] == rid), None)
-        hi = max(len(lineup_for(race["round"] if race else 1)) - 1, 4)
+        hi = cars_on_grid(race["round"] if race else 1)   # 4 to the last car on this weekend's grid
         value = random.randint(4, hi)
         con().execute("UPDATE races SET pwhat=? WHERE id=?", (value, rid))
         con().commit()
@@ -493,6 +561,13 @@ def create_app(db_path=None):
                 d = f1api.by_position(got, i)
                 if d:
                     writes["%s%d" % (prefix, i)] = matcher.name_for(d)
+            for row in got:   # grid slot, DNF/DNS, times. Notes players typed stay put.
+                inf = f1api.info_of(row, prefix)
+                con().execute("""INSERT INTO result_info(race_id, session, driver, grid, tag, status, time) VALUES (?,?,?,?,?,?,?)
+                                 ON CONFLICT(race_id, session, driver) DO UPDATE SET grid=excluded.grid, tag=excluded.tag,
+                                 status=excluded.status, time=excluded.time""",
+                              (rid, prefix, matcher.name_for(row["Driver"]), inf.get("grid"), inf.get("tag"),
+                               inf.get("status"), inf.get("time")))
             filled.append(word)
         for slot, value in writes.items():
             con().execute("INSERT OR REPLACE INTO results VALUES (?,?,?)", (rid, slot, value))
@@ -506,10 +581,46 @@ def create_app(db_path=None):
         if official and circuits.BY_API_ID.get(official.get("circuit_id")):
             con().execute("UPDATE races SET circuit=? WHERE id=?", (circuits.BY_API_ID[official["circuit_id"]], rid))
         con().commit()
+        try:
+            update_standings()
+        except Exception:   # the standings are a bonus; never lose the results over them
+            pass
         msg = "Filled the %s from the %s." % (", ".join(filled), name or "round %s" % rnd)
         if race["is_sprint"]:
             msg += " Sprint pole isn't published, so set that one yourself."
         return jsonify({"message": msg, "unmatched": matcher.unmatched, "suggestions": suggestions})
+
+    @app.route("/api/races/<int:rid>/note", methods=["PUT"])
+    def set_note(rid):
+        """A note next to a driver's result, like a 5-second penalty."""
+        b = request.get_json(force=True)
+        session_ = str(b.get("session") or "P")[:2]
+        driver = str(b.get("driver") or "").strip()
+        if driver in EMPTY:
+            return fail("Fill in the driver for that position first.")
+        note = str(b.get("note") or "").strip()[:40]
+        con().execute("""INSERT INTO result_info(race_id, session, driver, note) VALUES (?,?,?,?)
+                         ON CONFLICT(race_id, session, driver) DO UPDATE SET note=excluded.note""", (rid, session_, driver, note))
+        con().commit()
+        return jsonify({"ok": True})
+
+    @app.route("/api/standings/update", methods=["POST"])
+    def update_standings_route():
+        note, n = update_standings()
+        if not n:
+            return fail("There are no results yet to count championship points from.")
+        return jsonify({"message": note + "."})
+
+    @app.route("/api/season/final-from-standings", methods=["POST"])
+    def final_from_standings():
+        st = rows("SELECT * FROM driver_standings ORDER BY position")
+        if not st:
+            return fail("Update the championship points first.")
+        con().execute("DELETE FROM season_final")
+        for x in st:
+            con().execute("INSERT OR REPLACE INTO season_final VALUES (?,?)", (x["position"], x["driver"]))
+        con().commit()
+        return jsonify({"ok": True})
 
     # ------------------------------------------------------------------ line-up changes
     @app.route("/api/lineup", methods=["POST"])
@@ -579,8 +690,15 @@ def create_app(db_path=None):
             for field in ("name", "color"):
                 if b.get(field):
                     con().execute("UPDATE players SET %s=? WHERE id=?" % field, (b[field].strip(), pid))
-            if b.get("car_style") in ("classic", "wedge", "retro"):
+            if b.get("car_style") in CAR_STYLES:
                 con().execute("UPDATE players SET car_style=? WHERE id=?", (b["car_style"], pid))
+            if b.get("car_livery") in CAR_LIVERIES:
+                con().execute("UPDATE players SET car_livery=? WHERE id=?", (b["car_livery"], pid))
+            for field in ("car_accent", "car_helmet"):
+                if field in b:
+                    if not HEX.fullmatch(str(b[field] or "")):
+                        return fail("Pick a color for that.")
+                    con().execute("UPDATE players SET %s=? WHERE id=?" % field, (b[field], pid))
             if "car_number" in b:
                 try:
                     n = max(0, min(99, int(b["car_number"])))
@@ -659,7 +777,8 @@ def create_app(db_path=None):
             for table, col in (("picks", "value"), ("results", "driver"),
                                ("lineup_changes", "out_driver"), ("lineup_changes", "in_driver"),
                                ("season_answers", "value"), ("season_question_final", "value"),
-                               ("season_picks", "driver"), ("season_final", "driver")):
+                               ("season_picks", "driver"), ("season_final", "driver"),
+                               ("result_info", "driver"), ("driver_standings", "driver")):
                 con().execute("UPDATE %s SET %s=? WHERE %s=?" % (table, col, col), (new, old["name"]))
         if "code" in b:
             con().execute("UPDATE drivers SET code=? WHERE id=?", ((b["code"] or "").upper()[:3], did))
@@ -747,8 +866,10 @@ def create_app(db_path=None):
         exact = number(b.get("exact_points", cur.get("exact_points", 1)), "Points for an exact pick", 1)
         close = 0 if kind == "judged" else number(b.get("close_points", cur.get("close_points", 0)), "Points for the closest pick")
         unique = 1 if b.get("unique_picks", cur.get("unique_picks", 0)) in (True, 1, "1", "true", "on") else 0
+        m_exact = number(b.get("multi_exact", cur.get("multi_exact")), "Points for an exact pick with 3+ players", 2)
+        m_close = number(b.get("multi_close", cur.get("multi_close")), "Points for the next closest pick with 3+ players", 1)
         return dict(label=label, kind=kind, source=source, position=position, exact_points=exact,
-                    close_points=close, unique_picks=unique, applies=applies)
+                    close_points=close, unique_picks=unique, applies=applies, multi_exact=m_exact, multi_close=m_close)
 
     @app.route("/api/categories", methods=["POST"])
     def add_category():
@@ -767,9 +888,9 @@ def create_app(db_path=None):
             key, n = "%s_%d" % (base, n), n + 1
         pos = con().execute("SELECT COALESCE(MAX(pos), -1) + 1 FROM categories").fetchone()[0]
         con().execute("""INSERT INTO categories(key, label, kind, source, position, exact_points, close_points,
-                         unique_picks, applies, pos) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                         unique_picks, applies, pos, multi_exact, multi_close) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
                       (key, f["label"], f["kind"], f["source"], f["position"], f["exact_points"], f["close_points"],
-                       f["unique_picks"], f["applies"], pos))
+                       f["unique_picks"], f["applies"], pos, f["multi_exact"], f["multi_close"]))
         con().commit()
         return jsonify({"ok": True, "key": key})
 
@@ -788,9 +909,9 @@ def create_app(db_path=None):
             except ValueError as e:
                 return fail(str(e))
             con().execute("""UPDATE categories SET label=?, kind=?, source=?, position=?, exact_points=?,
-                             close_points=?, unique_picks=?, applies=? WHERE id=?""",
+                             close_points=?, unique_picks=?, applies=?, multi_exact=?, multi_close=? WHERE id=?""",
                           (f["label"], f["kind"], f["source"], f["position"], f["exact_points"], f["close_points"],
-                           f["unique_picks"], f["applies"], cid))
+                           f["unique_picks"], f["applies"], f["multi_exact"], f["multi_close"], cid))
         con().commit()
         return jsonify({"ok": True})
 
