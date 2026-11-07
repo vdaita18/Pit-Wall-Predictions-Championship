@@ -715,3 +715,42 @@ input.slot-note:hover, input.slot-note:focus { border-color: var(--line); backgr
 }
 .reserve-note { color: var(--dust); font-size: 13px; margin: 14px 0 0; }
 .reserve-note b { color: var(--chalk); font-weight: 700; }
+
+/* ---------------------------------------------------------------- seasons */
+.archive-bar { position: sticky; top: 0; z-index: 6; margin-left: var(--rail); display: flex; gap: 14px; align-items: center;
+  justify-content: center; flex-wrap: wrap; padding: 10px 20px; background: #2a2410; border-bottom: 1px solid #5a4a12;
+  color: #f2d27a; font-size: 14px; }
+.archive-bar[hidden] { display: none; }
+.archive-bar b { color: #ffe39a; }
+body.archived .brand-season { color: #f2d27a; }
+.season-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 18px; margin-bottom: 22px; }
+.season-card { background: var(--tarmac); border: 1px solid #2c2f35; border-radius: var(--radius-m); padding: 20px 22px; }
+.season-card.now { border-color: rgba(232,49,44,.45); }
+.sc-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.sc-head h2 { margin: 0; font: italic 900 40px/1 var(--display); }
+.season-card > p { margin: 6px 0 0; }
+.sc-champ { font-weight: 600; margin-top: 10px !important; }
+.sc-champ b { font: italic 800 22px var(--display); margin-left: 6px; }
+.tag-live { font-size: 12px; font-weight: 700; color: var(--dust); border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; }
+.sc-bars { list-style: none; padding: 0; margin: 16px 0 0; display: grid; gap: 10px; }
+.sc-bars li { display: grid; grid-template-columns: 90px 1fr auto; gap: 4px 10px; align-items: center; }
+.sc-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc-bar { height: 10px; border-radius: 6px; background: #1a1b1f; overflow: hidden; }
+.sc-bar i { display: block; height: 100%; background: var(--c); border-radius: 6px; }
+.sc-bars b { font: italic 800 20px var(--display); }
+.sc-bars small { grid-column: 2 / 4; color: var(--dust); font-size: 12px; margin-top: -4px; }
+.alltime { width: 100%; border-collapse: collapse; }
+.alltime th { text-align: left; color: var(--dust); font-size: 12px; font-weight: 700; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.alltime td { padding: 12px 10px; border-bottom: 1px solid #26282d; font-weight: 600; font-variant-numeric: tabular-nums; }
+.next-season { margin-top: 22px; }
+.next-season p { max-width: 80ch; }
+@media (max-width: 820px) {
+  .archive-bar { margin-left: 0; font-size: 13px; padding: 8px 12px; }
+}
+/* past seasons: hide the buttons that only make sense while a season is being played */
+body.archived :is([data-action="delete-race"], [data-action="fetch-results"], [data-action="lineup-open"], [data-action="lineup-delete"],
+  [data-action="update-standings"], [data-action="full-calendar"], [data-action="load-schedule"], [data-action="add-official"],
+  [data-action="add-player"], [data-action="add-team"], [data-action="delete-player"], [data-action="delete-team"],
+  [data-action="delete-driver"], [data-action="cat-delete"], [data-action="cat-move"], [data-action="question-delete"]) { display: none !important; }
+body.archived input.slot-note:placeholder-shown { display: none; }
+body.archived .roll-btn, body.archived [data-action="roll"] { visibility: hidden; }

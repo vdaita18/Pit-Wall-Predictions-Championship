@@ -69,6 +69,7 @@ def create_app(db_path=None):
         "season_pick": "made a season pick", "season_final": "updated the final standings",
         "set_note": "added a result note", "update_standings": "updated the drivers' championship",
         "final_from_standings": "copied the drivers' championship into the final standings",
+        "new_season": "archived the season and started the next one",
     }
 
     # every update changes the version, so browsers fetch the new styles and scripts instead of old cached ones
@@ -80,10 +81,41 @@ def create_app(db_path=None):
     def asset_version():
         return {"asset_v": ASSET_V}
 
+    # ------------------------------------------------------------------ seasons
+    # The season being played lives in data/pitwall.db. Finished seasons are archived whole in
+    # data/seasons/<year>.db, and any page can show one by sending X-Pitwall-Season: <year> (or ?season=).
+    ARCHIVE_DIR = os.path.join(os.path.dirname(os.path.abspath(app.config["DB_PATH"])), "seasons")
+    SEASON_ID = re.compile(r"\d{4}(-\d{1,2})?")
+    upgraded = set()
+
+    def archive_path(sid):
+        return os.path.join(ARCHIVE_DIR, sid + ".db")
+
+    def archives():
+        if not os.path.isdir(ARCHIVE_DIR):
+            return []
+        ids = [f[:-3] for f in os.listdir(ARCHIVE_DIR) if f.endswith(".db") and SEASON_ID.fullmatch(f[:-3])]
+        return sorted(ids, key=lambda x: [int(n) for n in x.split("-")], reverse=True)
+
+    def viewing():
+        """The archived season this request is about, or None for the season being played."""
+        sid = (request.headers.get("X-Pitwall-Season") or request.args.get("season") or "").strip()
+        return sid if SEASON_ID.fullmatch(sid) and os.path.exists(archive_path(sid)) else None
+
+    def db_path_now():
+        sid = viewing() if request else None
+        if not sid:
+            return app.config["DB_PATH"]
+        path = archive_path(sid)
+        if path not in upgraded:   # archives made by older versions get the same upgrades as the live season
+            db.init(path)
+            upgraded.add(path)
+        return path
+
     # ------------------------------------------------------------------ helpers
     def con():
         if "con" not in g:
-            g.con = db.connect(app.config["DB_PATH"])
+            g.con = db.connect(db_path_now())
         return g.con
 
     @app.teardown_appcontext
@@ -327,6 +359,8 @@ def create_app(db_path=None):
     def guard_writes():
         if request.method == "GET" or not request.path.startswith("/api/"):
             return None
+        if viewing():
+            return fail("That's a past season, so it can't be changed. Switch back to the current season to make changes.", 403)
         if request.endpoint in OPEN_WRITES:
             return None
         if not signed_in():
@@ -1049,6 +1083,84 @@ def create_app(db_path=None):
     def backup():
         if not signed_in():
             return fail("Sign in to download a backup.", 401)
-        return send_file(app.config["DB_PATH"], as_attachment=True, download_name="pitwall-backup.db")
+        sid = viewing()
+        return send_file(archive_path(sid) if sid else app.config["DB_PATH"], as_attachment=True,
+                         download_name="pitwall-%s.db" % (sid or "backup"))
+
+    # ------------------------------------------------------------------ seasons
+    def summary_of(path, sid, current):
+        """Final (or so-far) totals and weekend wins for one season file."""
+        saved = g.pop("con", None)
+        g.con = db.connect(path)
+        try:
+            ps, rs = players(), races()
+            scores = all_scores(ps, rs)
+            stats = build_stats(ps, rs, scores, cats())
+            spts = season_totals(ps)
+            done = [r for r in rs if r["has_results"]]
+            wins = {p["id"]: 0 for p in ps}
+            for r in done:
+                got = {pid: sum(v.values()) for pid, v in scores[r["id"]].items()}
+                top = max(got.values()) if got else 0
+                leaders = [pid for pid, v in got.items() if v == top]
+                if top and len(leaders) == 1:
+                    wins[leaders[0]] += 1
+            table = sorted([{"name": p["name"], "color": p["color"], "race_points": stats["totals"][p["id"]],
+                             "season_points": spts[p["id"]], "total": round(stats["totals"][p["id"]] + spts[p["id"]], 2),
+                             "weekend_wins": wins[p["id"]]} for p in ps], key=lambda x: -x["total"])
+            champ = table[0]["name"] if table and (len(table) == 1 or table[0]["total"] > table[1]["total"]) else None
+            return {"id": sid, "year": db.setting(g.con, "season", sid), "current": current, "weekends": len(done),
+                    "calendar": len(rs), "players": table, "champion": champ if done else None}
+        finally:
+            g.con.close()
+            g.pop("con", None)
+            if saved is not None:
+                g.con = saved
+
+    @app.route("/api/seasons")
+    def seasons_route():
+        out = [summary_of(app.config["DB_PATH"], None, True)]
+        out += [summary_of(archive_path(sid), sid, False) for sid in archives()]
+        # all-time: players matched by name across seasons
+        allt = {}
+        for se in out:
+            for i, p in enumerate(se["players"]):
+                a = allt.setdefault(p["name"], {"name": p["name"], "color": p["color"], "seasons": 0, "titles": 0,
+                                                "points": 0, "weekend_wins": 0, "weekends": 0})
+                a["seasons"] += 1
+                a["points"] = round(a["points"] + p["total"], 2)
+                a["weekend_wins"] += p["weekend_wins"]
+                a["weekends"] += se["weekends"]
+                if not se["current"] and se["champion"] == p["name"]:
+                    a["titles"] += 1
+                if se["current"]:
+                    a["color"] = p["color"]
+        return jsonify({"seasons": out, "all_time": sorted(allt.values(), key=lambda a: (-a["titles"], -a["points"]))})
+
+    @app.route("/api/seasons/new", methods=["POST"])
+    def new_season():
+        """Archive the season as it stands, then clear it for next year. Players, teams, drivers,
+        prediction types and season questions carry over; picks, results and line-up changes don't."""
+        c = con()
+        year = season()
+        if not year.isdigit():
+            return fail("Set the season year on Grid & players first.")
+        sid, n = year, 2
+        while os.path.exists(archive_path(sid)):
+            sid, n = "%s-%d" % (year, n), n + 1
+        os.makedirs(ARCHIVE_DIR, exist_ok=True)
+        c.commit()
+        dest = db.connect(archive_path(sid))
+        c.backup(dest)
+        dest.close()
+        for table in ("picks", "results", "manual", "result_info", "races", "season_picks", "season_final",
+                      "season_answers", "season_question_final", "lineup_changes", "driver_standings"):
+            c.execute("DELETE FROM %s" % table)
+        c.execute("UPDATE drivers SET sidelined=0")
+        c.execute("DELETE FROM settings WHERE key IN ('season_calendar', 'standings_note')")
+        c.execute("INSERT OR REPLACE INTO settings VALUES ('season', ?)", (str(int(year) + 1),))
+        c.commit()
+        schedule_cache.clear()
+        return jsonify({"archived": sid, "season": str(int(year) + 1)})
 
     return app

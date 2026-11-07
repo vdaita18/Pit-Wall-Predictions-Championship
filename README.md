@@ -87,6 +87,7 @@ Your browser opens at http://localhost:5000. Keep the terminal window open while
 | **Season picks** | Predict the final drivers' championship and answer season questions. Shows every driver's championship points so far, and picks score against them, so after the last race they are the final result. **Update championship points** refreshes them, and Get results does it automatically. Reserve drivers who score are listed underneath instead of taking a place. |
 | **Prediction types** | Change the scoring, or add and remove prediction types. |
 | **Grid & players** | Players, teams, drivers, line-up changes, the season year and backups. |
+| **Seasons** | Every season you've played, with its champion and totals, plus all-time records. Open any past season to see every page as it finished. At the end of a year, **Archive and start** the next one. |
 
 ## Make it your own
 
@@ -119,7 +120,11 @@ Change any of it on **Prediction types** and **Season picks**.
 
 ## Start a new season
 
-Set the year on **Grid & players**, then click **Calendar → Add the whole season**. To wipe everything and start over, delete `data/pitwall.db` (on PythonAnywhere: `rm ~/pitwall/data/pitwall.db`, then **Reload**). A fresh one is created with the default rules.
+When the last race is done, open **Seasons** and click **Archive and start** the next year. The finished season is saved exactly as it is, and the new one begins with your players, cars, teams, drivers, prediction types and season questions. Picks, results and line-up changes start fresh, and the new calendar is added when the results service has it (otherwise use **Calendar → Add the whole season** later). Then update the drivers on **Grid & players** for the new year.
+
+To look back, open **Seasons** and click **Open** on any past year. Standings, every weekend, analytics, player cards, season picks and the replay all show that season, read-only. **Back to the current season** returns you. Past seasons are stored in `data/seasons/`, one file each, and updates never touch them.
+
+To wipe everything instead, delete `data/pitwall.db` (on PythonAnywhere: `rm ~/pitwall/data/pitwall.db`, then **Reload**). A fresh one is created with the default rules.
 
 ## Your data
 

@@ -29,9 +29,15 @@
   })();
   let knownRev = 0;
 
+  // Which season this tab is looking at: "" is the season being played, "2026" an archived one (read-only).
+  let VIEW_SEASON = "";
+  try { VIEW_SEASON = sessionStorage.getItem("pitwall-season") || ""; } catch (e) { /* private window */ }
+  const seasonHeaders = () => (VIEW_SEASON ? { "X-Pitwall-Season": VIEW_SEASON } : {});
+  const seasonQuery = () => (VIEW_SEASON ? "?season=" + encodeURIComponent(VIEW_SEASON) : "");
+
   async function api(method, url, body) {
     const res = await fetch(url, {
-      method, headers: Object.assign({ "X-Pitwall-Device": DEVICE }, body ? { "Content-Type": "application/json" } : {}),
+      method, headers: Object.assign({ "X-Pitwall-Device": DEVICE }, seasonHeaders(), body ? { "Content-Type": "application/json" } : {}),
       body: body ? JSON.stringify(body) : undefined, credentials: "same-origin",
     });
     const rev = Number(res.headers.get("X-Pitwall-Rev"));
@@ -106,7 +112,7 @@
   async function poll() {
     if (document.hidden) return;
     try {
-      const r = await fetch("/api/rev", { credentials: "same-origin" }).then((x) => x.json());
+      const r = await fetch("/api/rev", { credentials: "same-origin", headers: seasonHeaders() }).then((x) => x.json());
       if (r.rev > knownRev) {
         knownRev = r.rev;
         const mine = r.device ? r.device === DEVICE : String(r.by_id || "") === String(ME.player_id || "");
@@ -143,7 +149,40 @@
     });
   }
 
-  async function loadState() { S = await api("GET", "/api/state"); $("#brand-season").textContent = S.season + " season"; renderWho(); }
+  async function loadState() {
+    try { S = await api("GET", "/api/state"); }
+    catch (e) {   // an archive that's gone (or a bad link): back to the season being played
+      if (!VIEW_SEASON) throw e;
+      switchSeason(""); return;
+    }
+    $("#brand-season").textContent = S.season + (VIEW_SEASON ? " · archived" : " season");
+    renderWho(); paintArchiveBar();
+  }
+
+  // ------------------------------------------------------------------ past seasons
+  function switchSeason(sid) {
+    try { if (sid) sessionStorage.setItem("pitwall-season", sid); else sessionStorage.removeItem("pitwall-season"); } catch (e) { /* ok */ }
+    location.hash = sid ? "#/" : "#/seasons";
+    location.reload();
+  }
+  window.PIT_ARCHIVED = !!VIEW_SEASON;
+  document.body.classList.toggle("archived", !!VIEW_SEASON);
+  function paintArchiveBar() {
+    const bar = $("#archive-bar"); if (!bar) return;
+    bar.hidden = !VIEW_SEASON;
+    if (VIEW_SEASON) bar.innerHTML = `<span><b>${esc(S.season)} season</b> · archived, so nothing here can be changed</span>
+      <button class="btn small" type="button" data-keep id="archive-back">Back to the current season</button>`;
+    const b = $("#archive-back"); if (b) b.onclick = () => switchSeason("");
+  }
+  // past seasons are read-only: every control on the page is switched off as it appears
+  function lockControls(root) {
+    if (!VIEW_SEASON) return;
+    root.querySelectorAll("input, select, textarea, button").forEach((el) => {
+      if (el.hasAttribute("data-keep") || el.closest("[data-keep]")) return;
+      el.disabled = true;
+    });
+  }
+  if (VIEW_SEASON) new MutationObserver(() => lockControls(view)).observe(view, { childList: true, subtree: true });
 
   // ------------------------------------------------------------------ driver chip select
   const colorOf = (name, pool) => ((pool || []).find((d) => d.name === name) || {}).team_color || teamColor(name);
@@ -174,6 +213,46 @@
       <select ${attrs} aria-label="Driver">${opts}</select></span>`;
   }
 
+  // ------------------------------------------------------------------ seasons
+  async function viewSeasons() {
+    const data = await api("GET", "/api/seasons");
+    const cur = data.seasons.find((x) => x.current);
+    const card = (se) => {
+      const top = Math.max(1, ...se.players.map((p) => p.total));
+      const open = se.current ? (VIEW_SEASON ? `<button class="btn small" type="button" data-keep data-season-open="">Open</button>` : `<span class="tag-live">Playing now</span>`)
+        : (VIEW_SEASON === se.id ? `<span class="tag-live">Viewing</span>` : `<button class="btn small" type="button" data-keep data-season-open="${esc(se.id)}">Open</button>`);
+      return `<article class="season-card ${se.current ? "now" : ""}">
+        <div class="sc-head"><h2>${esc(se.year)}</h2>${open}</div>
+        <p class="muted">${se.current ? `${se.weekends} of ${se.calendar} race weekends so far` : `${se.weekends} race weekends`}</p>
+        ${se.champion ? `<p class="sc-champ">${se.current ? "Leading" : "Champion"} <b style="color:${(se.players[0] || {}).color}">${esc(se.champion)}</b></p>`
+          : `<p class="sc-champ muted">${se.weekends ? "All square" : "Not started yet"}</p>`}
+        <ul class="sc-bars">${se.players.map((p) => `<li style="--c:${p.color}">
+          <span class="sc-name">${esc(p.name)}</span><span class="sc-bar"><i style="width:${Math.max(2, (p.total / top) * 100)}%"></i></span>
+          <b>${pts(p.total)}</b><small>${p.weekend_wins} weekend win${p.weekend_wins === 1 ? "" : "s"}</small></li>`).join("")}</ul></article>`;
+    };
+    const past = data.seasons.filter((x) => !x.current);
+    const allTime = data.all_time.map((a) => `<tr>
+      <td><span class="dot" style="--c:${a.color}"></span> ${esc(a.name)}</td><td>${a.titles}</td><td>${a.seasons}</td>
+      <td>${pts(a.points)}</td><td>${a.weekend_wins}</td><td>${a.weekends ? pts(Math.round((a.points / a.weekends) * 100) / 100) : "—"}</td></tr>`).join("");
+    return `
+      <div class="page-head"><div><h1>Seasons</h1>
+        <p class="sub">Every season you've played. Open a past one to see its standings, weekends, analytics, player cards and replay, just as they finished.</p></div></div>
+      <div class="season-cards">${data.seasons.map(card).join("")}</div>
+      ${past.length ? `<section class="panel"><h2>All time</h2>
+        <p class="muted" style="margin-top:-6px">Players are matched by name across seasons. Points include season picks, and titles count finished seasons.</p>
+        <div style="overflow-x:auto"><table class="alltime"><thead><tr><th>Player</th><th>Titles</th><th>Seasons</th><th>Points</th><th>Weekend wins</th><th>Points per weekend</th></tr></thead>
+        <tbody>${allTime}</tbody></table></div></section>` : ""}
+      ${VIEW_SEASON ? "" : `<section class="panel next-season">
+        <h2>Finished the ${esc(cur.year)} season?</h2>
+        <p class="muted">Archive ${esc(cur.year)} and start ${esc(String(Number(cur.year) + 1))}. The whole season is saved exactly as it is and stays here to open any time.
+          Players, cars, teams, drivers, prediction types and season questions carry over. Picks, results and line-up changes start fresh,
+          and the new calendar is added for you when it's available. Update the drivers on Grid &amp; players for the new year.</p>
+        <button class="btn" type="button" data-action="new-season" data-keep>Archive ${esc(cur.year)} and start ${esc(String(Number(cur.year) + 1))}</button></section>`}`;
+  }
+  viewSeasons.after = () => {
+    view.querySelectorAll("[data-season-open]").forEach((b) => b.addEventListener("click", () => switchSeason(b.dataset.seasonOpen)));
+  };
+
   const standingOf = (name) => (S.driver_standings || []).find((x) => x.driver === name);
   const standingTag = (name) => { const x = standingOf(name); return x ? ` · P${x.position}, ${pts(x.points)} pts` : ""; };
   const infoOf = (session, driver) => (((RV && RV.info) || {})[session] || {})[driver] || null;
@@ -182,6 +261,7 @@
   const routes = {
     "": viewStandings, calendar: viewCalendar, weekend: viewWeekend, race: viewRace,
     analytics: viewAnalytics, replay: viewReplay, rules: viewRules, cards: viewCards, season: viewSeason, grid: viewGrid,
+    seasons: viewSeasons,
   };
   async function route(animate = true) {
     const [, name = "", arg] = (location.hash || "#/").split("/");
@@ -658,7 +738,7 @@
     }).join("");
     return `
       <div class="page-head"><div><h1>Analytics</h1><p class="sub">Win–loss–tie by weekend, average points depending on who picks first, and where the points come from.</p></div>
-        <span class="spacer"></span><a class="btn ghost" href="/api/export.csv">Download database (CSV)</a></div>
+        <span class="spacer"></span><a class="btn ghost" href="/api/export.csv${seasonQuery()}">Download database (CSV)</a></div>
       <div class="stack">
         <div class="statline">${stats}</div>
         <div class="charts">
@@ -954,8 +1034,8 @@
               <input type="number" id="season-year" value="${esc(S.season)}" min="1950" max="2100" style="width:110px" data-action="season-year"></div>
             <p class="sub">The season decides which official calendar and results Get Results uses.</p>
             <div class="field" style="margin-top:16px">
-              <a class="btn ghost small" href="/api/export.csv">Download database (CSV)</a>
-              <a class="btn ghost small" href="/api/backup">Download backup</a></div>
+              <a class="btn ghost small" href="/api/export.csv${seasonQuery()}">Download database (CSV)</a>
+              <a class="btn ghost small" href="/api/backup${seasonQuery()}">Download backup</a></div>
           </section>
         </div>
         <section class="panel">
@@ -1090,6 +1170,15 @@
       el.disabled = true;
       try { const r = await api("POST", "/api/races/full-calendar"); toast(r.added ? `Added ${r.added} race weekends.` : "Every round is already on the calendar."); await refresh(); }
       finally { el.disabled = false; }
+    } else if (a === "new-season") {
+      const yr = S.season, next = String(Number(yr) + 1);
+      if (!(await confirmBox(`Start the ${next} season?`, `${yr} is archived exactly as it is, and you can open it from Seasons any time. Picks, results and line-up changes start fresh for ${next}. Everyone using the site switches to ${next}.`, `Archive ${yr}`))) return;
+      el.disabled = true;
+      const r = await api("POST", "/api/seasons/new");
+      let msg = `${r.archived} is archived. Welcome to ${r.season}.`;
+      try { const cal = await api("POST", "/api/races/full-calendar"); if (cal.added) msg += ` The ${r.season} calendar is in.`; }
+      catch (e) { msg += " Add the calendar from Calendar once it's published."; }
+      await refresh(); toast(msg, "ok", 6000); location.hash = "#/";
     } else if (a === "update-standings") {
       el.disabled = true; const label = el.textContent; el.textContent = "Updating…";
       try { const r = await api("POST", "/api/standings/update"); toast(r.message); await refresh(); }

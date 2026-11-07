@@ -291,6 +291,35 @@ class PitWallTest(unittest.TestCase):
         # Piastri is P2 once the reserve is left out, so the P2 pick scores
         self.assertEqual(next(s for s in st["standings"] if s["player_id"] == self.A)["season_points"], 0.5)
 
+    def test_seasons_archive_and_view(self):
+        self.c.put("/api/settings", json={"season": "2026"})
+        rid = self.race()
+        self.pick(rid, self.A, "p1", "Norris")
+        self.c.put("/api/races/%d/result" % rid, json={"slot": "P1", "value": "Norris"})
+        self.c.put("/api/players/%d" % self.A, json={"car_style": "kart"})
+        out = self.c.post("/api/seasons/new").get_json()
+        self.assertEqual(out, {"archived": "2026", "season": "2027"})
+        # the new season is empty but keeps players, cars and prediction types
+        st = self.c.get("/api/state").get_json()
+        self.assertEqual((st["season"], st["races"], st["season_picks"]), ("2027", [], []))
+        self.assertEqual(next(p for p in st["players"] if p["id"] == self.A)["car_style"], "kart")
+        self.assertTrue(st["categories"])
+        # the archive opens with everything in it, and can't be changed
+        old = self.c.get("/api/state", headers={"X-Pitwall-Season": "2026"}).get_json()
+        self.assertEqual((old["season"], len(old["races"])), ("2026", 1))
+        self.assertEqual(next(s for s in old["standings"] if s["player_id"] == self.A)["total"], 1)
+        r = self.c.put("/api/races/%d/pick" % rid, json={"player_id": self.A, "category": "p1", "value": "Piastri"},
+                       headers={"X-Pitwall-Season": "2026"})
+        self.assertEqual(r.status_code, 403)
+        # the seasons page shows both, with the 2026 champion and all-time totals
+        data = self.c.get("/api/seasons").get_json()
+        self.assertEqual([(s["year"], s["current"]) for s in data["seasons"]], [("2027", True), ("2026", False)])
+        name = data["seasons"][1]["champion"]
+        self.assertEqual(next(a for a in data["all_time"] if a["name"] == name)["titles"], 1)
+        # archiving the same year again never overwrites the first archive
+        self.c.put("/api/settings", json={"season": "2026"})
+        self.assertEqual(self.c.post("/api/seasons/new").get_json()["archived"], "2026-2")
+
     def test_car_options(self):
         r = self.c.put("/api/players/%d" % self.A, json={"car_style": "rocket", "car_livery": "sash",
                                                          "car_accent": "#ffffff", "car_helmet": "#112233"})

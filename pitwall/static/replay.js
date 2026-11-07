@@ -143,7 +143,7 @@
           <div class="replay-finish" hidden><span class="chequer" aria-hidden="true"></span><span class="replay-finish-text"></span></div>
         </section>` : `<div class="empty"><h2>The race starts after the first results</h2><p>Once a weekend has results, it becomes a lap of the replay.</p></div>`}
         <section class="panel"><div class="grid-head"><h2 style="margin:0">Garage</h2>
-            <label class="track-pick">Track <select data-garage="track" aria-label="Replay track"></select></label></div>
+            <label class="track-pick">Track <select data-garage="track" data-keep aria-label="Replay track"></select></label></div>
           <p class="sub" style="margin-top:-6px">Build your car. The main color is your player color from Grid &amp; players.</p>
           <div class="garage">${garage}</div></section>
       </div>`;
@@ -165,7 +165,7 @@
     sel.addEventListener("change", async (e) => {
       e.stopPropagation();
       try {
-        await api("PUT", "/api/settings", { replay_circuit: sel.value });
+        if (!window.PIT_ARCHIVED) await api("PUT", "/api/settings", { replay_circuit: sel.value });   // past seasons: just this once
         S.replay_circuit = sel.value;
         startRace(root, S, circuits);
       } catch (err) { if (window.PitToast) window.PitToast(err.message, "err"); }
